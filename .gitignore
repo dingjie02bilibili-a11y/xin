@@ -1,0 +1,20 @@
+# Godot generated files / caches
+.godot/
+
+# Build / export / test outputs
+outputs/
+
+# Local Godot editor binaries and downloaded package
+work/godot/
+work/godot.zip
+
+# Local third-party GDScript tooling
+work/gdtoolkit/
+
+# Test / debug logs
+work/*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini

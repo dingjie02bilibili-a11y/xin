@@ -1,0 +1,7 @@
+Godot Engine v4.4.1.stable.official.49a5bc7b6 - https://godotengine.org
+
+RELIC_LOGIC_SMOKE_OK ranks={ "predator_boots": 1, "aegis_fragment": 1, "rift_compass": 1, "judge_spark": 1, "ember_vessel": 1, "storm_relay": 3 } interval=0.5704
+WARNING: 1 RID of type "CanvasItem" was leaked.
+   at: _free_rids (servers/rendering/renderer_canvas_cull.cpp:2677)
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+   at: cleanup (core/object/object.cpp:2378)
