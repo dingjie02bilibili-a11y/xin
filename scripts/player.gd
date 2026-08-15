@@ -7,8 +7,8 @@ signal hurt(amount: float)
 signal healed(amount: float)
 signal shield_blocked
 
-var max_health := 100.0
-var health := 100.0
+var max_health := 115.0
+var health := 115.0
 var speed := 260.0
 var acceleration := 1850.0
 var turn_acceleration := 2700.0
@@ -92,7 +92,7 @@ func take_damage(amount: float) -> void:
 		mitigated *= 1.0 + absf(armor) * 0.08
 	var actual := maxf(1.0, mitigated * incoming_damage_multiplier)
 	health = maxf(0.0, health - actual)
-	invulnerable = 0.22
+	invulnerable = 0.35
 	damage_flash = 0.28
 	hurt.emit(actual)
 	health_changed.emit(health, max_health)

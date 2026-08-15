@@ -19,6 +19,8 @@ enum GameState { MENU, PLAYING, LEVEL_UP, PAUSED, GAME_OVER }
 const WORLD_DRAW_RADIUS := Vector2(1900, 1300)
 const RUN_DURATION := 360.0
 const MAINLINE_BOSS_SCHEDULE := [60, 120, 180, 240, 300, 355]
+# 逐章显式指定，保证 Boss 血量曲线单调递增（每章约 +33%）
+const MAINLINE_BOSS_HEALTH := [520.0, 780.0, 1100.0, 1500.0, 2000.0, 2600.0]
 const ENDLESS_WAVE_DURATION := 45.0
 const FIRST_SHOP_TIME := 38.0
 const SHOP_INTERVAL := 60.0
@@ -27,14 +29,24 @@ const STARTING_CARD_SLOTS := 5
 const MAX_CARD_SLOTS := 7
 const ACTIVE_HAND_BASE_COOLDOWN := 0.85
 const MAX_RESONANCE := 100.0
+# 单次释放只抽取固定额度，多宠构筑不再互相抽干共鸣池
+const RESONANCE_SPEND := 30.0
 const PHASE_STEP_COOLDOWN := 0.75
 const PHASE_STEP_INVULNERABILITY := 0.28
 const MAX_CLEANSE_WARD_CHARGES := 2
+# 一局 6 分钟、满血 100，而过去除了商店随机出现的战地修复之外没有任何续航，
+# 损血是永久的：打完第一只 Boss 掉一半血就再也回不来，整局退化成一次性淘汰赛。
+# 脱战微量回复负责抹平小怪的擦伤，击败 Boss 的大额回复负责制造「紧张—释放」的关卡节奏。
+const OUT_OF_COMBAT_REGEN := 0.010
+const OUT_OF_COMBAT_DELAY := 4.0
+const BOSS_CLEAR_HEAL := 0.75
+const BOSS_CLEAR_MAX_HEALTH := 18.0
+const BOSS_CLEAR_ARMOR := 1.0
 const TRAINING_CARD_IDS := ["damage", "cooldown", "speed", "health", "armor", "regen", "crit", "magnet"]
 const PET_ENERGY_REQUIREMENTS := {
-	"aura":1.0, "orbit":1.4, "satellite_engine":1.8, "chain":2.0,
-	"nova":3.0, "phase_step":2.2, "thunder_orb":2.8, "gravity_well":4.0,
-	"blade_dance":2.2, "meteor_rain":4.0, "aegis":5.0, "execute":2.5
+	"aura":0.8, "orbit":1.1, "satellite_engine":1.5, "chain":2.0,
+	"nova":3.0, "phase_step":2.2, "thunder_orb":2.8, "gravity_well":3.0,
+	"blade_dance":1.6, "meteor_rain":4.0, "aegis":3.0, "execute":2.5
 }
 const CHARACTER_UNLOCK_ACHIEVEMENTS := {
 	"游侠": "",
@@ -234,7 +246,7 @@ const BOSS_RELICS := [
 	{"id":"storm_relay", "name":"风暴继电器", "type":"宠物遗物", "desc":"每级：弧牙多跳2次；鸣霄雷暴范围+25%", "icon":"⚡"}
 ]
 const UPGRADES := [
-	{"id":"damage", "name":"能量压缩训练", "desc":"立即提高基础供能强度；游侠与星火使收益更高", "max":8, "icon":"◆"},
+	{"id":"damage", "name":"能量压缩训练", "desc":"立即提高每枚供能弹的能量；游侠与星火使收益更高", "max":8, "icon":"◆"},
 	{"id":"cooldown", "name":"供能校准训练", "desc":"立即缩短基础供能间隔；星术师收益更高", "max":8, "icon":"◴"},
 	{"id":"speed", "name":"步法训练", "desc":"立即提高基础移动速度；影舞者收益更高", "max":8, "icon":"➤"},
 	{"id":"health", "name":"体魄训练", "desc":"立即提高最大生命；骑士与守卫收益更高", "max":8, "icon":"♥"},
@@ -403,6 +415,7 @@ var pending_levels := 0
 var finished_run := false
 var next_shop_time := FIRST_SHOP_TIME
 var shop_pending := false
+var queued_shops := 0
 var shop_visit := 0
 var shop_goods: Array = []
 var shop_reroll_count := 0
@@ -509,6 +522,7 @@ func _process(delta: float) -> void:
 		var target_wave := 1 + int(endless_elapsed / ENDLESS_WAVE_DURATION)
 		if target_wave > endless_wave:
 			endless_wave = target_wave
+			queued_shops += 1
 			shop_pending = true
 			show_toast("无尽挑战 · 第 %d 波开始" % endless_wave, Color("f472b6"))
 			show_endless_story_beat(endless_wave)
@@ -546,8 +560,12 @@ func _process(delta: float) -> void:
 	process_pickups(delta)
 	check_boss_timing()
 	if not endless_mode and elapsed >= next_shop_time:
+		# 错过的商店必须累计。Boss 在场时商店被锁，过去这里只把时间戳推到未来、
+		# 而 shop_pending 又只是布尔量，于是卡 Boss 期间错过的每一家商店都被永久
+		# 吞掉、最后只补开一次，直接构成「打不动 Boss → 买不到强化 → 更打不动」。
 		while elapsed >= next_shop_time:
 			next_shop_time += SHOP_INTERVAL
+			queued_shops += 1
 		shop_pending = true
 	if shop_pending and get_tree().get_nodes_in_group("bosses").is_empty() and not is_instance_valid(boss_reward_overlay):
 		show_shop()
@@ -599,9 +617,25 @@ func clear_game() -> void:
 	boss_affix_pending = false
 	pending_boss_rewards.clear()
 	mainline_completion_pending = false
-	for child in get_children():
-		if child != ui_layer and child != camera and child != self and (child is Player or child.name in ["Entities", "Projectiles", "Pickups", "Visuals", "Hazards"]):
-			child.queue_free()
+	# 必须按引用释放，不能按节点名匹配。queue_free 要到帧末才生效，而
+	# 「再次远征」会在同一帧里清场并重建根节点；此时旧的同名兄弟还在树上，
+	# Godot 会直接丢弃新节点的名字换成内部名，之后任何按名字的清场都会漏掉
+	# 整个世界（上一局的敌人会占满 enemy_cap 导致新一局不刷怪，残留 Boss 还会
+	# 永久阻塞商店）。remove_child 是同步的，能让节点立刻退出分组并停止处理。
+	for node in [player, entity_root, projectile_root, pickup_root, visual_root, hazard_root]:
+		if is_instance_valid(node):
+			if node.get_parent() != null:
+				node.get_parent().remove_child(node)
+			node.queue_free()
+	# 兜底：任何仍留在树上的战斗单位都立刻脱离场景树，避免污染新一局的分组查询。
+	for group_name in ["enemies", "bosses"]:
+		for stale in get_tree().get_nodes_in_group(group_name):
+			if is_instance_valid(stale):
+				if stale.get_parent() != null:
+					stale.get_parent().remove_child(stale)
+				stale.queue_free()
+	skill_entities.clear()
+	pet_energy.clear()
 	player = null
 	camera = null
 	entity_root = null
@@ -609,6 +643,7 @@ func clear_game() -> void:
 	pickup_root = null
 	visual_root = null
 	hazard_root = null
+	weapon_visual = null
 
 func full_rect_control() -> Control:
 	var control := Control.new()
@@ -878,7 +913,7 @@ func character_opening_line(character: String) -> String:
 		"骑士": return "洛恩：暮环放心，我会挡住前面的危险。"
 		"星术师": return "弥星：先排好队形，再让星光出发。"
 		"守卫": return "砾：卫星准备好，我们去修好那扇门。"
-		"影舞者": return "绯：瞬影跟紧我，我们比风暴更快。"
+		"影舞者": return "绯：刃舞跟紧我，我们比风暴更快。"
 		"星火使": return "烬歌：坠火，带上火种一起回家！"
 	return "远征者：把能量交给星灵，一起点亮星渊。"
 
@@ -1250,11 +1285,11 @@ func show_character_select() -> void:
 	cards.add_theme_constant_override("v_separation", 8)
 	box.add_child(cards)
 	var data := [
-		["游侠", "精准供能", "连续向同一宠物供能逐步增强\n开局弧牙，全部宠物伤害+10%", "66d9ff", "默认"],
+		["游侠", "精准供能", "供能弹更强更快\n开局弧牙，全部宠物伤害+10%", "66d9ff", "默认"],
 		["骑士", "守护供能", "生命 +45、护甲 +3\n受击会为防御宠物补充能量", "ffbd69", "可用"],
-		["星术师", "分流供能", "每次发射两枚较小供能弹\n开局拥有微弱光环", "c084fc", "可用"],
+		["星术师", "分流供能", "每枚供能弹携带更多能量\n开局拥有微弱光环", "c084fc", "可用"],
 		["守卫", "阵地供能", "生命 +30、护甲 +2\n站稳后供能强度提高", "4ade80", "默认可用"],
-		["影舞者", "移动供能", "高速移动时供能更频繁\n宠物暴击+20%，开局瞬影", "f472b6", "默认可用"],
+		["影舞者", "移动供能", "高速移动时供能更频繁\n宠物暴击+20%，开局刃舞", "f472b6", "默认可用"],
 		["星火使", "过热供能", "连续供能逐渐提高强度\n宠物伤害+5%、范围+15%", "fb923c", "默认可用"]
 	]
 	for info in data:
@@ -1442,6 +1477,7 @@ func start_game_after_prologue() -> void:
 	pending_levels = 0
 	next_shop_time = FIRST_SHOP_TIME
 	shop_pending = false
+	queued_shops = 0
 	shop_visit = 0
 	shop_goods.clear()
 	shop_reroll_count = 0
@@ -1490,7 +1526,7 @@ func start_game_after_prologue() -> void:
 		"cooldown": 1.0,
 		"area": 1.0,
 		"crit": 0.05,
-		"magnet": 105.0,
+		"magnet": 150.0,
 		"luck": 0.0,
 		"energy_power": 1.0
 	}
@@ -1581,19 +1617,20 @@ func start_game_after_prologue() -> void:
 		"骑士": has_aura = true
 		"星术师":
 			has_aura = true
-			aura_radius = 80.0
+			aura_radius = 132.0
 		"守卫":
 			has_orbit = true
 			orbit_count = 2
 		"影舞者":
+			# 瞬影本质是位移技能，单独作为开局宠物无法清场（实测 69 次释放只换到 4 星屑）。
+			# 改为开局携带刃舞：贴身高速旋转切割，与「高机动近战」的定位一致。
 			stats.crit += 0.20
 			stats.cooldown *= 0.9
-			upgrade_levels["phase_step"] = 1
-			phase_step_enabled = true
-			equipped_cards.append("phase_step")
+			upgrade_levels["blade_dance"] = 1
+			equipped_cards.append("blade_dance")
 		"星火使":
 			has_aura = true
-			aura_radius = 135.0
+			aura_radius = 205.0
 			stats.area *= 1.15
 			stats.damage *= 1.05
 	if has_aura:
@@ -1604,6 +1641,7 @@ func start_game_after_prologue() -> void:
 		award_pet_meeting_achievement(starting_pet_id)
 	stats.crit = minf(0.85, float(stats.crit))
 	award_character_achievement(player.character_name)
+	refresh_derived_card_effects()
 	weapon_visual = WeaponVisualScript.new()
 	weapon_visual.owner_player = player
 	weapon_visual.game = self
@@ -1703,11 +1741,11 @@ func build_hud() -> void:
 	passive_row.add_child(passive_box)
 	passive_box.add_child(make_label("%s · 固有特性" % player.character_name, 13, player.color))
 	var passive_descriptions := {
-		"游侠":"同宠供能增强 · 宠物伤害+10% · 初始弧牙",
+		"游侠":"高效供能 · 宠物伤害+10% · 初始弧牙",
 		"骑士":"受击补能 · 生命+45 护甲+3",
-		"星术师":"双发分流供能 · 微光环",
+		"星术师":"高密度供能 · 微光环",
 		"守卫":"站稳后供能+35% · 双卫星",
-		"影舞者":"移动供能加快 · 宠物暴击+20% · 初始瞬影",
+		"影舞者":"移动供能加快 · 宠物暴击+20% · 初始刃舞",
 		"星火使":"连续供能升温 · 宠物伤害+5% 范围+15%"
 	}
 	var passive_note := make_label(str(passive_descriptions.get(player.character_name, "")), 8, Color("c7d7eb"))
@@ -1799,7 +1837,7 @@ func update_skill_list() -> void:
 	if not is_instance_valid(skill_slot_root):
 		return
 	if is_instance_valid(deck_status_label):
-		deck_status_label.text = "宠物伤害＝基础值 × 基础伤害 × 左侧加算 × 右侧乘算 × 暴击/版本　当前有效倍率×%.2f" % last_chain_multiplier
+		deck_status_label.text = "宠物伤害＝基础值 × 基础伤害 × 左侧加算 × 右侧乘算 × 暴击/版本　当前有效倍率×%.2f　共鸣 %d/%d" % [last_chain_multiplier, int(resonance), int(MAX_RESONANCE)]
 	var active_ids: Array[String] = []
 	var names: Dictionary = {}
 	for upgrade in UPGRADES:
@@ -1987,9 +2025,17 @@ func refresh_skill_entities() -> void:
 			var entity: SkillEntity = skill_entities[id]
 			entity.set_formation(index, active_ids.size())
 
+func pet_hunt_target() -> Vector2:
+	if not is_instance_valid(player):
+		return Vector2.ZERO
+	var target := preferred_enemy_from(player.global_position, 560.0)
+	return target.global_position if is_instance_valid(target) else Vector2.ZERO
+
 func skill_entity_origin(id: String) -> Vector2:
 	var entity = skill_entities.get(id)
-	return entity.global_position if is_instance_valid(entity) else player.global_position
+	if is_instance_valid(entity):
+		return entity.global_position
+	return player.global_position if is_instance_valid(player) else Vector2.ZERO
 
 func orbit_pet_source_id() -> String:
 	for id in equipped_cards:
@@ -2197,12 +2243,12 @@ func refresh_derived_card_effects() -> void:
 	var guardian_passive := int(upgrade_levels.get("guardian_bastion", 0)) > 0
 	var dancer_passive := int(upgrade_levels.get("dancer_execution", 0)) > 0
 	var fire_passive := int(upgrade_levels.get("fire_rite", 0)) > 0
-	aura_radius = 105.0
+	aura_radius = 168.0
 	if player.character_name == "星术师":
-		aura_radius = 80.0
+		aura_radius = 132.0
 	elif player.character_name == "星火使":
-		aura_radius = 135.0
-	aura_radius += aura_level * 16.0
+		aura_radius = 205.0
+	aura_radius += aura_level * 20.0
 	if knight_passive:
 		aura_radius += 32.0
 	if mage_passive:
@@ -2210,7 +2256,7 @@ func refresh_derived_card_effects() -> void:
 	has_aura = player.character_name in ["骑士", "星术师", "星火使"] or aura_level > 0 or knight_passive or fire_passive
 	aura_ignite = fire_passive
 	has_orbit = player.character_name == "守卫" or orbit_level > 0 or satellite_level > 0 or blade_card_level > 0 or guardian_passive
-	orbit_count = 2 if player.character_name == "守卫" else 1
+	orbit_count = 3 if player.character_name == "守卫" else 2
 	orbit_count = maxi(orbit_count, orbit_level)
 	if satellite_level > 0:
 		orbit_count = maxi(orbit_count, satellite_level + 1)
@@ -2476,15 +2522,15 @@ func calculate_skill_damage(base: float, source_id: String, target: Enemy = null
 
 func soften_damage_multiplier(raw_multiplier: float) -> float:
 	var safe_multiplier := maxf(0.1, raw_multiplier)
-	if safe_multiplier <= 6.0:
+	if safe_multiplier <= 8.0:
 		return safe_multiplier
-	# 超过阈值后仍保留35%边际收益，避免任何正向词条变成零收益。
-	return 6.0 + (safe_multiplier - 6.0) * 0.35
+	# 超过阈值后仍保留50%边际收益，避免任何正向词条变成零收益。
+	return 8.0 + (safe_multiplier - 8.0) * 0.50
 
 func raw_damage_multiplier_from_effective(effective_multiplier: float) -> float:
-	if effective_multiplier <= 6.0:
+	if effective_multiplier <= 8.0:
 		return effective_multiplier
-	return 6.0 + (effective_multiplier - 6.0) / 0.35
+	return 8.0 + (effective_multiplier - 8.0) / 0.50
 
 func resolve_core_card_chain(base: float, source_id: String, target: Enemy = null) -> float:
 	var base_result := base * float(stats.damage)
@@ -2668,19 +2714,21 @@ func resolve_core_card_chain(base: float, source_id: String, target: Enemy = nul
 						multiplier *= 1.12
 						trace.append("星图学者×1.12")
 	var did_crit := randf() < crit_chance
+	var crit_factor := 1.0
 	if did_crit:
-		multiplier *= 2.0 + bonus_crit_damage
+		crit_factor = 2.0 + bonus_crit_damage
 		trace.append("宠物暴击")
 	var edition_id := str(card_editions.get(source_id, ""))
 	match edition_id:
 		"foil": multiplier *= 1.15; trace.append("闪箔")
 		"holographic":
 			if did_crit:
-				multiplier *= 1.25
+				crit_factor *= 1.25
 				trace.append("镭射宠物暴击")
 		"polychrome": multiplier *= 1.20; trace.append("多彩×1.2")
 	last_chain_trace = trace
-	last_chain_multiplier = soften_damage_multiplier((1.0 + additive) * multiplier)
+	# 暴击放在软上限之外结算，保证暴击流在任何构筑强度下都是完整收益。
+	last_chain_multiplier = soften_damage_multiplier((1.0 + additive) * multiplier) * crit_factor
 	return base_result * last_chain_multiplier
 
 func copied_card_effect(id: String, target_distance: float, dense_targets: int, target: Enemy, hit_count: int, has_pair: bool, has_trio: bool) -> Dictionary:
@@ -2882,14 +2930,17 @@ func spawn_wavelet() -> void:
 	var amount := 1
 	if endless_mode:
 		amount = 2 + (1 if endless_wave >= 7 and randf() < 0.45 else 0)
-	elif chapter >= 4:
+	elif randf() < clampf(float(chapter - 1) * 0.22, 0.0, 1.0):
 		amount = 2
-	elif chapter >= 2 and randf() < 0.18 + chapter * 0.06:
-		amount = 2
-	if not endless_mode and chapter >= 6 and randf() < 0.35:
+	if not endless_mode and chapter >= 6 and randf() < 0.20:
 		amount += 1
-	var enemy_cap := 72 + (mini(28, endless_wave * 2) if endless_mode else maxi(0, chapter - 3) * 5)
+	var boss_present := not get_tree().get_nodes_in_group("bosses").is_empty()
+	var enemy_cap := (72 + mini(28, endless_wave * 2)) if endless_mode else mini(62, 44 + chapter * 5)
+	if boss_present:
+		enemy_cap = mini(enemy_cap, 26)
 	if get_tree().get_nodes_in_group("enemies").size() >= enemy_cap:
+		return
+	if boss_present and randf() > 0.35:
 		return
 	for i in amount:
 		spawn_enemy(chapter_enemy_kind(chapter, endless_wave if endless_mode else 0))
@@ -2909,11 +2960,11 @@ func chapter_enemy_kind(chapter: int, wave := 0) -> String:
 	var weighted: Array[String] = []
 	match chapter:
 		1: weighted.assign(["追猎者", "追猎者", "追猎者", "追猎者", "疾行兽"])
-		2: weighted.assign(["追猎者", "追猎者", "疾行兽", "疾行兽", "重甲怪"])
-		3: weighted.assign(["追猎者", "疾行兽", "重甲怪", "重甲怪", "咒术师"])
-		4: weighted.assign(["追猎者", "疾行兽", "疾行兽", "重甲怪", "咒术师"])
+		2: weighted.assign(["追猎者", "追猎者", "追猎者", "疾行兽", "重甲怪"])
+		3: weighted.assign(["追猎者", "追猎者", "疾行兽", "重甲怪", "咒术师"])
+		4: weighted.assign(["追猎者", "疾行兽", "重甲怪", "重甲怪", "咒术师"])
 		5: weighted.assign(["疾行兽", "重甲怪", "重甲怪", "咒术师", "咒术师"])
-		_: weighted.assign(["追猎者", "疾行兽", "重甲怪", "咒术师", "咒术师"])
+		_: weighted.assign(["疾行兽", "重甲怪", "重甲怪", "咒术师", "咒术师"])
 	if wave >= 6:
 		weighted.append("重甲怪")
 		weighted.append("咒术师")
@@ -2928,7 +2979,9 @@ func spawn_enemy(kind: String, boss := false) -> Enemy:
 	enemy.add_to_group("enemies")
 	if boss:
 		enemy.add_to_group("bosses")
-	var difficulty := 0.92 + minf(elapsed, RUN_DURATION) / 520.0
+	# 不再对 elapsed 封顶：过去 minf(elapsed, RUN_DURATION) 会让 6 分钟后的敌人
+	# 强度永久停在 1.61 倍，主线因此完全失去时间压力，拖多久都不会输。
+	var difficulty := 0.92 + elapsed / 520.0
 	if endless_mode:
 		var late_wave := maxf(0.0, endless_wave - 13.0)
 		difficulty *= 1.0 + minf(12.0, endless_wave - 1.0) * 0.055 + sqrt(late_wave) * 0.025 + late_wave * 0.012
@@ -2975,6 +3028,7 @@ func check_boss_timing() -> void:
 			boss.set_meta("story_chapter", chapter)
 			boss.set_meta("damage_taken_at_spawn", damage_taken_this_run)
 			boss.set_chapter_tier(chapter)
+			boss.set_mainline_health(MAINLINE_BOSS_HEALTH[clampi(chapter - 1, 0, MAINLINE_BOSS_HEALTH.size() - 1)])
 			boss.set_affixes(roll_boss_affixes(chapter, boss.boss_style))
 			apply_luchador_counter(boss)
 			award_boss_affix_achievements(boss.affixes)
@@ -3293,7 +3347,7 @@ func process_weapons() -> void:
 		pulse_timer = energy_shot_interval()
 
 func energy_shot_interval() -> float:
-	var interval := 0.62 * float(stats.cooldown)
+	var interval := 0.50 * float(stats.cooldown)
 	if equipped_cards.has("endless_haste") and count_enemies_in_range(player.global_position, 300.0) >= 3:
 		interval *= pow(0.97, mini(10, int(upgrade_levels.get("endless_haste", 0))))
 	if player.character_name == "影舞者" and player.velocity.length() > player.speed * 0.55:
@@ -3335,20 +3389,12 @@ func next_energy_pet(advance_cursor := true) -> String:
 func energy_amount_for_pet(id: String) -> float:
 	var amount := float(stats.get("energy_power", 1.0))
 	match player.character_name:
-		"游侠":
-			if id == last_energy_pet:
-				ranger_focus_streak = mini(5, ranger_focus_streak + 1)
-			else:
-				ranger_focus_streak = 0
-			amount *= 1.15 + ranger_focus_streak * 0.05
-		"星术师": amount *= 0.62
+		"游侠": amount *= 1.22
+		"星术师": amount *= 1.24
 		"守卫":
 			if guardian_stationary_time >= 1.2:
 				amount *= 1.35
 		"星火使": amount *= 1.0 + minf(0.50, fire_energy_heat)
-	if surge_pulses > 0:
-		amount *= 1.50
-		surge_pulses -= 1
 	last_energy_pet = id
 	return amount
 
@@ -3388,12 +3434,12 @@ func try_release_charged_pet(id: String) -> bool:
 	var mastery_total := 0
 	for pattern in last_hand_patterns:
 		mastery_total += int(pattern_mastery.get(pattern, 0))
-	var resonance_spent := resonance if pet_consumes_resonance(id) else 0.0
-	active_hand_multiplier = clampf(1.0 + last_hand_energy * 0.003 + resonance_spent * 0.0065 + last_hand_patterns.size() * 0.06 + mastery_total * 0.03, 1.0, 2.25)
+	var resonance_spent := minf(resonance, RESONANCE_SPEND) if pet_consumes_resonance(id) else 0.0
+	active_hand_multiplier = clampf(1.0 + last_hand_energy * 0.006 + resonance_spent * 0.014 + last_hand_patterns.size() * 0.06 + mastery_total * 0.03, 1.0, 2.60)
 	# Consume the old pool before the synchronous cast. Damage and kills generated by
 	# this cast then build a fresh pool for the next offensive pet.
 	if resonance_spent > 0.0:
-		resonance = 0.0
+		resonance = maxf(0.0, resonance - resonance_spent)
 	var released := cast_core_pet_from_hand(id, false)
 	echo_damage_captures.erase(id)
 	active_hand_multiplier = 1.0
@@ -3406,9 +3452,6 @@ func try_release_charged_pet(id: String) -> bool:
 	pet_energy[id] = maxf(0.0, float(pet_energy[id]) - requirement)
 	if star_bridge_hands > 0:
 		star_bridge_hands -= 1
-	if player.character_name == "游侠" and id == last_energy_pet:
-		last_energy_pet = ""
-		ranger_focus_streak = 0
 	return true
 
 func has_any_attack_target() -> bool:
@@ -3513,7 +3556,7 @@ func cast_core_pet_from_hand(id: String, orbit_group_cast: bool) -> bool:
 			if has_aura and has_enemy_in_effect_radius(skill_entity_origin(id), aura_radius * skill_area_multiplier(id)):
 				fire_aura(); return true
 		"orbit", "satellite_engine", "blade_dance":
-			if not orbit_group_cast and has_orbit and has_enemy_in_range_from(skill_entity_origin(id), 150.0):
+			if not orbit_group_cast and has_orbit and has_enemy_in_range_from(skill_entity_origin(id), 210.0):
 				return fire_orbit_damage(id)
 		"chain":
 			if chain_level > 0 and nearest_enemy_from(skill_entity_origin(id), 740.0) != null:
@@ -3555,7 +3598,7 @@ func fire_execute() -> bool:
 				target = node
 	if is_instance_valid(target):
 		release_skill_entity("execute", target.global_position)
-		deal_skill_damage(target, calculate_skill_damage(18.0, "execute", target), "execute", Vector2.ZERO, "execute")
+		deal_skill_damage(target, calculate_skill_damage(26.0, "execute", target), "execute", Vector2.ZERO, "execute")
 		apply_core_card_modifiers(target, "execute")
 		if target.health <= 0.0:
 			record_core_mastery("execute")
@@ -3609,6 +3652,8 @@ func update_conditional_card_effects(delta: float) -> void:
 	if equipped_cards.has("armor") and not is_card_suppressed("armor") and count_enemies_in_range(player.global_position, 220.0) >= 3:
 		conditional_armor_bonus = 2.0 * int(upgrade_levels.get("armor", 0))
 	player.armor = armor_base + conditional_armor_bonus
+	if elapsed - last_hurt_elapsed >= OUT_OF_COMBAT_DELAY and player.health < player.max_health:
+		player.heal(player.max_health * OUT_OF_COMBAT_REGEN * delta)
 	if equipped_cards.has("regen") and not is_card_suppressed("regen") and elapsed - last_hurt_elapsed >= 4.0 and player.health < player.max_health:
 		player.heal(0.7 * int(upgrade_levels.get("regen", 0)) * delta)
 	if equipped_cards.has("endless_vitality") and not is_card_suppressed("endless_vitality") and elapsed - last_hurt_elapsed >= 4.0 and player.health < player.max_health:
@@ -3639,6 +3684,13 @@ func effective_magnet_range() -> float:
 func nearest_enemy(range_limit := 820.0) -> Enemy:
 	return nearest_enemy_from(player.global_position, range_limit)
 
+func preferred_enemy_from(origin: Vector2, range_limit := 820.0) -> Enemy:
+	# Boss 在场时优先咬 Boss：否则 AoE 构筑的伤害会被杂兵全部吸走。
+	for boss in get_tree().get_nodes_in_group("bosses"):
+		if is_instance_valid(boss) and origin.distance_to(boss.global_position) <= range_limit + boss.radius:
+			return boss
+	return nearest_enemy_from(origin, range_limit)
+
 func nearest_enemy_from(origin: Vector2, range_limit := 820.0) -> Enemy:
 	var closest: Enemy
 	var best := INF
@@ -3652,21 +3704,29 @@ func nearest_enemy_from(origin: Vector2, range_limit := 820.0) -> Enemy:
 	return closest
 
 func fire_pulse() -> void:
-	var bolt_count := 2 if player.character_name == "星术师" else 1
+	# 每只未充满的宠物各得一枚供能弹。过去整轮只发 1 枚、在宠物之间轮流投喂，
+	# 于是总能量吞吐与宠物数量完全无关——多买一只宠物不但不提升输出，还会稀释
+	# 共鸣池和条件养成进度，让「组队」这个核心成长方向变成负收益。
+	var targets := selectable_energy_pet_ids()
+	if targets.is_empty():
+		if lone_star_protocol_active():
+			fire_lone_star_spark()
+		return
+	var surged := surge_pulses > 0
+	if surged:
+		surge_pulses -= 1
 	var launched := 0
-	for index in bolt_count:
-		var id := next_energy_pet(player.character_name != "游侠")
-		if id.is_empty():
-			break
+	var travel_speed := 930.0 if player.character_name == "游侠" else 760.0
+	for index in targets.size():
+		var id := targets[index]
 		var entity = skill_entities.get(id)
 		if not is_instance_valid(entity):
 			continue
 		var bolt: EnergyBolt = EnergyBoltScript.new()
 		projectile_root.add_child(bolt)
-		var origin_offset := Vector2(0.0, (float(index) - float(bolt_count - 1) * 0.5) * 11.0).rotated(player.rotation)
+		var origin_offset := Vector2(0.0, (float(index) - float(targets.size() - 1) * 0.5) * 11.0).rotated(player.rotation)
 		bolt.global_position = player.global_position + origin_offset
-		var travel_speed := 930.0 if player.character_name == "游侠" else 760.0
-		bolt.setup(entity, id, self, energy_amount_for_pet(id), travel_speed)
+		bolt.setup(entity, id, self, energy_amount_for_pet(id) * (1.5 if surged else 1.0), travel_speed)
 		launched += 1
 	if player.character_name == "星火使" and launched > 0:
 		fire_energy_heat = minf(0.50, fire_energy_heat + 0.055)
@@ -3704,7 +3764,7 @@ func fire_aura() -> void:
 	for node in get_tree().get_nodes_in_group("enemies"):
 		if is_instance_valid(node) and origin.distance_to(node.global_position) <= radius + node.radius:
 			hit_count += 1
-			deal_skill_damage(node, calculate_skill_damage(7.5, "aura", node), "aura", (node.global_position - origin).normalized() * 35.0)
+			deal_skill_damage(node, calculate_skill_damage(15.0, "aura", node), "aura", (node.global_position - origin).normalized() * 35.0)
 			apply_core_card_modifiers(node, "aura")
 			if aura_ignite:
 				node.apply_burn(base_card_damage(3.0) * skill_status_multiplier("aura"), 1.8)
@@ -3721,18 +3781,19 @@ func fire_orbit_damage(source_id := "") -> bool:
 	var orbit_bonus := int(floor(core_mastery_rank("orbit") / 2.0)) if is_card_active("orbit") else 0
 	var satellite_bonus := int(floor(core_mastery_rank("satellite_engine") / 2.0)) if is_card_active("satellite_engine") else 0
 	var effective_orbit_count := maxi(1, orbit_count + orbit_bonus + satellite_bonus)
-	var orbit_radius := 74.0 + core_mastery_rank("blade_dance") * 3.0
+	var orbit_radius := 104.0 + core_mastery_rank("blade_dance") * 4.0
 	var spin := Time.get_ticks_msec() * (0.0022 + core_mastery_rank("blade_dance") * 0.00012)
 	for i in effective_orbit_count:
 		positions.append(origin + Vector2.from_angle(spin + TAU * i / effective_orbit_count) * orbit_radius)
+	# 卫星是「点」，命中窗口只有 30 像素，实测守卫一整章只能触发 30 多次、直接被淹。
+	# 改成整圈扫过：卫星沿轨道环高速旋转，环上的敌人都会被切到。
+	var ring_band := 26.0 + float(effective_orbit_count) * 3.0
 	var hit_targets: Array = []
 	for node in get_tree().get_nodes_in_group("enemies"):
 		if not is_instance_valid(node):
 			continue
-		for pos in positions:
-			if pos.distance_to(node.global_position) < 14.0 + node.radius:
-				hit_targets.append(node)
-				break
+		if absf(origin.distance_to(node.global_position) - orbit_radius) < ring_band + node.radius:
+			hit_targets.append(node)
 	if hit_targets.is_empty():
 		return false
 	var orbit_target_position: Vector2 = hit_targets[0].global_position
@@ -3742,7 +3803,7 @@ func fire_orbit_damage(source_id := "") -> bool:
 	var hit_count := 0
 	for node in hit_targets:
 		hit_count += 1
-		var orbit_damage := calculate_skill_damage(5.0 + active_blade_level * 3.0, orbit_source, node)
+		var orbit_damage := calculate_skill_damage(7.0 + float(effective_orbit_count) * 2.0 + active_blade_level * 9.0, orbit_source, node)
 		if evolutions.has("stellar_lattice") and node.consume_resonance():
 			orbit_damage *= 2.25
 		if active_combo_names().has("瞬身刃舞") and active_blade_level > 0 and node.consume_phase_mark():
@@ -3759,7 +3820,7 @@ func fire_orbit_damage(source_id := "") -> bool:
 	return true
 
 func fire_chain_lightning() -> void:
-	var current := nearest_enemy_from(skill_entity_origin("chain"), 740.0)
+	var current := preferred_enemy_from(skill_entity_origin("chain"), 740.0)
 	if current == null:
 		return
 	release_skill_entity("chain", current.global_position)
@@ -3799,7 +3860,7 @@ func fire_nova() -> void:
 	for node in get_tree().get_nodes_in_group("enemies"):
 		if is_instance_valid(node) and origin.distance_to(node.global_position) <= radius + node.radius:
 			hit_count += 1
-			var nova_damage := calculate_skill_damage(16.0 + nova_level * 4.0, "nova", node)
+			var nova_damage := calculate_skill_damage(26.0 + nova_level * 6.0, "nova", node)
 			if active_combo_names().has("坍缩爆心"):
 				var collapse: int = node.consume_collapse()
 				if collapse > 0:
@@ -3814,7 +3875,7 @@ func fire_nova() -> void:
 	play_tone(240.0, 0.12, 0.18)
 
 func fire_thunder_orb() -> void:
-	var target := nearest_enemy_from(skill_entity_origin("thunder_orb"), 900.0)
+	var target := preferred_enemy_from(skill_entity_origin("thunder_orb"), 900.0)
 	if target == null:
 		return
 	release_skill_entity("thunder_orb", target.global_position)
@@ -3830,7 +3891,7 @@ func fire_thunder_orb() -> void:
 		if is_instance_valid(node) and node.global_position.distance_to(target.global_position) <= radius + node.radius:
 			hit_count += 1
 			mastery_target = mastery_target or node.is_boss or node.kind in ["重甲怪", "咒术师"]
-			var thunder_damage := calculate_skill_damage(13.0 + thunder_level * 4.0, "thunder_orb", node) * (1.55 if conducted else 1.0)
+			var thunder_damage := calculate_skill_damage(20.0 + thunder_level * 6.0, "thunder_orb", node) * (1.55 if conducted else 1.0)
 			deal_skill_damage(node, thunder_damage, "thunder_orb", Vector2.ZERO, "reaction" if conducted else "thunder")
 			apply_core_card_modifiers(node, "thunder_orb")
 	if mastery_target or hit_count >= 3:
@@ -3840,7 +3901,7 @@ func fire_thunder_orb() -> void:
 	play_tone(760.0, 0.06, 0.1)
 
 func fire_gravity_well() -> void:
-	var target := nearest_enemy_from(skill_entity_origin("gravity_well"), 760.0)
+	var target := preferred_enemy_from(skill_entity_origin("gravity_well"), 760.0)
 	if target == null:
 		return
 	release_skill_entity("gravity_well", target.global_position)
@@ -3860,7 +3921,7 @@ func fire_gravity_well() -> void:
 	spawn_skill_effect(target.global_position, "gravity", Color("c084fc"), gravity_radius)
 
 func fire_meteor_rain() -> void:
-	var target := nearest_enemy_from(skill_entity_origin("meteor_rain"), 950.0)
+	var target := preferred_enemy_from(skill_entity_origin("meteor_rain"), 950.0)
 	if target == null:
 		return
 	release_skill_entity("meteor_rain", target.global_position)
@@ -3869,7 +3930,7 @@ func fire_meteor_rain() -> void:
 	for node in get_tree().get_nodes_in_group("enemies"):
 		if is_instance_valid(node) and node.global_position.distance_to(target.global_position) < meteor_radius + node.radius:
 			hit_count += 1
-			var meteor_damage := calculate_skill_damage(24.0 + meteor_level * 7.0, "meteor_rain", node)
+			var meteor_damage := calculate_skill_damage(31.0 + meteor_level * 9.0, "meteor_rain", node)
 			if active_combo_names().has("极寒天火") and node.consume_frost():
 				meteor_damage *= 1.7
 				spawn_skill_effect(node.global_position, "nova", Color("93c5fd"), 68.0)
@@ -3900,7 +3961,7 @@ func use_phase_step() -> void:
 	for node in get_tree().get_nodes_in_group("enemies"):
 		if is_instance_valid(node) and node.global_position.distance_to(Geometry2D.get_closest_point_to_segment(node.global_position, old_position, destination)) < 38.0 + node.radius:
 			hit_count += 1
-			deal_skill_damage(node, calculate_skill_damage(12.0, "phase_step", node), "phase_step", direction * 90.0, "phase")
+			deal_skill_damage(node, calculate_skill_damage(24.0, "phase_step", node), "phase_step", direction * 90.0, "phase")
 			if active_combo_names().has("瞬身刃舞"):
 				node.apply_phase_mark()
 			apply_core_card_modifiers(node, "phase_step")
@@ -3986,6 +4047,12 @@ func on_enemy_defeated(enemy: Enemy, value: int) -> void:
 					show_toast("蓝蜡封研究 · 完成%d次星式研究" % completed_research, Color("70d7ff"), 1.0)
 		clear_boss_card_disruptions(enemy)
 		boss_kills += 1
+		# 终章的压力主要来自群怪的持续接触伤害，护甲成长正好作用在这里。
+		player.increase_max_health(BOSS_CLEAR_MAX_HEALTH)
+		player.armor += BOSS_CLEAR_ARMOR
+		var boss_heal := player.max_health * BOSS_CLEAR_HEAL
+		player.heal(boss_heal)
+		show_toast("关卡结算 · 最大生命 +%d · 护甲 +%d · 恢复 %d 生命" % [int(BOSS_CLEAR_MAX_HEALTH), int(BOSS_CLEAR_ARMOR), int(boss_heal)], Color("4ade80"), 1.4)
 		campfire_stacks = 0
 		award_boss_achievements(enemy)
 		call_deferred("show_boss_reward", enemy.kind, story_chapter)
@@ -4015,7 +4082,7 @@ func roll_enemy_shard_reward(is_boss: bool, enemy_kind: String = "") -> int:
 		return 6 + int(floor(boss_kills * 0.75))
 	if enemy_kind in ["重甲怪", "咒术师"]:
 		return 2
-	var drop_chance := 0.30 + clampf(float(stats.get("luck", 0.0)), 0.0, 0.12)
+	var drop_chance := clampf(0.36 - float(current_mainline_chapter()) * 0.035, 0.14, 0.36) + clampf(float(stats.get("luck", 0.0)), 0.0, 0.12)
 	return 1 if randf() < drop_chance else 0
 
 func show_boss_reward(_boss_name: String, story_chapter := 0) -> void:
@@ -4123,8 +4190,10 @@ func finish_boss_reward_selection() -> void:
 	# Boss宝箱本身已经是一轮构筑选择；不再紧接着强制弹出商店。
 	# 下一家定时商店保证提供与当前宠物相关的搭档牌。
 	directed_shop_pending = true
-	shop_pending = false
-	next_shop_time = maxf(next_shop_time, elapsed + 25.0)
+	# Boss 战期间被锁住的商店是玩家已经挣到的，打完就该兑现，
+	# 否则「打得慢 -> 商店被吞 -> 更打不动」的负反馈会一直闭合。
+	shop_pending = queued_shops > 0
+	next_shop_time = maxf(next_shop_time, elapsed + 20.0)
 
 func show_mainline_completion_choice() -> void:
 	if state == GameState.GAME_OVER or endless_mode or not mainline_completion_pending or is_instance_valid(mainline_complete_overlay):
@@ -4347,9 +4416,10 @@ func process_pickups(delta: float) -> void:
 			child.global_position = child.global_position.move_toward(player.global_position, strength * delta)
 			distance = child.global_position.distance_to(player.global_position)
 		# 无限地图上不让货币永久遗失：存在数秒且离得过远时直接汇入钱包。
-		if child.kind == "shard" and child.age >= 8.0 and distance > 900.0:
-			collect_pickup(child)
-			continue
+		if child.kind == "shard" and child.age >= 3.0:
+			# 无限地图 + 风筝流的组合下，掉落该由战斗表现决定归属，而不是走位路线。
+			child.global_position = child.global_position.move_toward(player.global_position, (620.0 + child.age * 90.0) * delta)
+			distance = child.global_position.distance_to(player.global_position)
 		if distance < 30.0:
 			collect_pickup(child)
 
@@ -4389,15 +4459,18 @@ func gain_xp(amount: int) -> void:
 	gain_star_shards(amount)
 
 func card_shop_price(id: String) -> int:
+	var base := 6
 	if is_training_card(id):
-		return 5 + mini(8, int(upgrade_levels.get(id, 0)) * 2)
-	match card_rarity(id):
-		"普通": return 5
-		"稀有": return 8
-		"史诗": return 11
-		"传奇": return 15
-		"专属": return 9
-	return 6
+		base = 5 + mini(8, int(upgrade_levels.get(id, 0)) * 2)
+	else:
+		match card_rarity(id):
+			"普通": base = 5
+			"稀有": base = 8
+			"史诗": base = 11
+			"传奇": base = 15
+			"专属": base = 9
+	# 收入随章节滚雪球，定价必须跟着走，否则中后期「全买」没有任何取舍。
+	return maxi(1, int(round(float(base) * (1.0 + 0.09 * float(maxi(0, shop_visit - 1))))))
 
 func card_sell_value(id: String) -> int:
 	var refund_ratio := 0.65 if active_vouchers.has("salvage_license") else 0.50
@@ -4507,6 +4580,13 @@ func make_guaranteed_shop_fallback(excluded: Array[String], used_keys: Array[Str
 	# Always-effective temporary sink: its boosted supply shots are consumed in combat.
 	return {"kind":"supply", "id":"supply_%d" % slot_index, "icon_id":"endless_haste", "price":6 + (mini(8, int(endless_wave / 3)) if endless_mode else 0), "sold":false}
 
+func make_pet_offer(excluded: Array[String]) -> Dictionary:
+	var pool: Array = available_shop_cards(excluded).filter(func(option): return str(option.id) in CORE_SKILL_CARD_IDS)
+	if pool.is_empty():
+		return {}
+	var choice := weighted_upgrade_pick(pool)
+	return {"kind":"card", "id":str(choice.id), "price":card_shop_price(str(choice.id)), "sold":false}
+
 func make_shop_card_offer(excluded: Array[String]) -> Dictionary:
 	var pool := available_shop_cards(excluded)
 	if pool.is_empty():
@@ -4556,12 +4636,16 @@ func make_shop_utility_offer(excluded: Array[String]) -> Dictionary:
 	return make_shop_card_offer(excluded)
 
 func prepare_shop_goods(_force_new := false) -> void:
-	var desired_count := SHOP_ITEM_COUNT + (1 if equipped_cards.has("juggler") else 0) + (1 if active_vouchers.has("wide_shelf") else 0)
+	# 上限 4 是布局硬约束：再宽商品文字会换行把整行撑高，操作行会被顶出视口。
+	var desired_count := mini(4, SHOP_ITEM_COUNT + mini(1, maxi(0, shop_visit - 1) / 2) + (1 if equipped_cards.has("juggler") else 0) + (1 if active_vouchers.has("wide_shelf") else 0))
 	shop_goods.clear()
 	var excluded: Array[String] = []
 	var used_keys: Array[String] = []
 	var needs_directed_offer := directed_shop_pending or shop_visit <= 2
 	var needs_endless_offer := endless_mode
+	# 战力完全由宠物提供，队伍没满之前必须保证每家商店都能招到人，
+	# 否则玩家会连续几家商店只看到规则牌，战力曲线原地不动。
+	var needs_pet_offer := equipped_pet_count() < 4
 	while shop_goods.size() < desired_count:
 		var offer: Dictionary
 		if needs_endless_offer:
@@ -4570,6 +4654,9 @@ func prepare_shop_goods(_force_new := false) -> void:
 		elif needs_directed_offer:
 			offer = make_directed_build_offer(excluded)
 			needs_directed_offer = false
+		elif needs_pet_offer:
+			offer = make_pet_offer(excluded)
+			needs_pet_offer = false
 		elif guaranteed_reward_pack and not shop_goods.any(func(item): return str(item.get("kind", "")) == "pack") and shop_goods.size() == desired_count - 1:
 			offer = {"kind":"pack", "id":["pet_pack", "rule_pack", "element_pack"].pick_random(), "price":0, "sold":false}
 			guaranteed_reward_pack = false
@@ -4585,6 +4672,8 @@ func prepare_shop_goods(_force_new := false) -> void:
 			offer = make_guaranteed_shop_fallback(excluded, used_keys, shop_goods.size())
 		shop_goods.append(offer)
 		used_keys.append(shop_offer_key(offer))
+		if str(offer.get("kind", "")) == "card" and str(offer.get("id", "")) in CORE_SKILL_CARD_IDS:
+			needs_pet_offer = false
 		if str(offer.get("kind", "")) in ["card", "endless"]:
 			excluded.append(str(offer.id))
 	directed_shop_pending = false
@@ -4596,6 +4685,7 @@ func show_shop(force := false) -> void:
 		shop_pending = true
 		return
 	shop_pending = false
+	queued_shops = maxi(0, queued_shops - 1)
 	resolve_wave_challenges()
 	bank_world_shards()
 	shop_visit += 1
@@ -4615,9 +4705,9 @@ func show_shop(force := false) -> void:
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.offset_left = 24
 	root.offset_right = -24
-	root.offset_top = 14
-	root.offset_bottom = -14
-	root.add_theme_constant_override("separation", 6)
+	root.offset_top = 10
+	root.offset_bottom = -10
+	root.add_theme_constant_override("separation", 4)
 	shop_overlay.add_child(root)
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", 18)
@@ -4630,13 +4720,19 @@ func show_shop(force := false) -> void:
 	var hint := make_label("星屑会保留到后续商店；按当前构筑取舍购买，或存下星屑等待高品质卡牌。", 12, Color("9bb4d1"))
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	root.add_child(hint)
+	# 货架高度必须是固定的：商品数量、文案长度、字体换行都会改变内容高度，
+	# 直接放进 VBox 会把下方的卡组面板和操作行顶出视口（回归测试已捕获）。
+	var goods_scroll := ScrollContainer.new()
+	goods_scroll.custom_minimum_size.y = 300
+	goods_scroll.size_flags_vertical = Control.SIZE_FILL
+	goods_scroll.process_mode = Node.PROCESS_MODE_ALWAYS
+	root.add_child(goods_scroll)
 	shop_goods_row = HBoxContainer.new()
-	shop_goods_row.custom_minimum_size.y = 250
-	shop_goods_row.size_flags_vertical = Control.SIZE_FILL
+	shop_goods_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	shop_goods_row.add_theme_constant_override("separation", 10)
-	root.add_child(shop_goods_row)
+	goods_scroll.add_child(shop_goods_row)
 	var deck_panel := PanelContainer.new()
-	deck_panel.custom_minimum_size.y = 140
+	deck_panel.custom_minimum_size.y = 126
 	deck_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	deck_panel.add_theme_stylebox_override("panel", compact_panel_style(Color("0b1834"), 12, Color("355c91"), 2))
 	root.add_child(deck_panel)
@@ -4927,7 +5023,7 @@ func refresh_shop_view() -> void:
 		panel.add_child(box)
 		var description := PanelContainer.new()
 		description.name = "ShopOfferDescription%d" % index
-		description.custom_minimum_size.x = 240
+		description.custom_minimum_size.x = clampf(1180.0 / float(maxi(1, shop_goods.size())) - 32.0, 186.0, 240.0)
 		description.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		description.mouse_filter = Control.MOUSE_FILTER_STOP
 		description.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
@@ -4938,7 +5034,7 @@ func refresh_shop_view() -> void:
 		if str(offer.get("kind", "")) in ["card", "endless"]:
 			var offer_icon := TextureRect.new()
 			offer_icon.texture = make_skill_icon(str(offer.get("icon_id", offer.id)))
-			offer_icon.custom_minimum_size = Vector2(72, 72)
+			offer_icon.custom_minimum_size = Vector2(60, 60)
 			offer_icon.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 			offer_icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 			offer_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -5020,7 +5116,7 @@ func refresh_shop_deck() -> void:
 		var rarity := card_rarity(id)
 		var rarity_color: Color = CARD_RARITY_COLORS.get(rarity, Color("9bb4d1"))
 		var card := PanelContainer.new()
-		card.custom_minimum_size = Vector2(152, 146)
+		card.custom_minimum_size = Vector2(152, 132)
 		card.add_theme_stylebox_override("panel", compact_panel_style(Color("10213e"), 10, rarity_color, 2))
 		cards_row.add_child(card)
 		var card_box := VBoxContainer.new()
@@ -5050,7 +5146,7 @@ func refresh_shop_deck() -> void:
 		card_box.add_child(sell)
 
 func reroll_shop() -> void:
-	var cost := 0 if active_vouchers.has("free_reroll") and shop_reroll_count == 0 else 2 + shop_reroll_count * 2
+	var cost := 0 if active_vouchers.has("free_reroll") and shop_reroll_count == 0 else 2 + shop_reroll_count
 	if star_shards < cost:
 		return
 	star_shards -= cost
@@ -5223,6 +5319,7 @@ func close_shop() -> void:
 	player.selection_protected = false
 	player.can_move = true
 	player.invulnerable = maxf(player.invulnerable, 0.8)
+	shop_pending = queued_shops > 0
 	state = GameState.PLAYING
 	get_tree().paused = false
 	update_hud()
@@ -5543,8 +5640,8 @@ func upgrade_offer_score(upgrade: Dictionary) -> float:
 		score += 5.0 if equipped_cards.size() >= card_slots else 2.5
 	if upgrade.has("character"):
 		score += 3.0
-	if id in CORE_SKILL_CARD_IDS and active_core_skill_ids().is_empty():
-		score += 4.0
+	if id in CORE_SKILL_CARD_IDS:
+		score += maxf(0.0, 6.0 - float(equipped_pet_count()) * 1.3)
 	if id in ["burn", "frost_brand", "homing", "projectile", "pierce", "area"] and not active_core_skill_ids().is_empty():
 		score += 2.0
 	for combo in DECK_COMBOS:
@@ -5765,7 +5862,7 @@ func apply_upgrade(id: String, from_shop := false, price := 0, offer_index := -1
 		"projectile", "pierce", "area": pass
 		"aura":
 			has_aura = true
-			aura_radius += 16.0
+			aura_radius += 20.0
 		"orbit":
 			has_orbit = true
 			orbit_count = max(orbit_count, int(upgrade_levels[id]))

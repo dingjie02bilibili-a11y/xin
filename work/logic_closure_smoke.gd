@@ -179,9 +179,10 @@ func run_test() -> void:
 
 	# The post-threshold curve remains strictly increasing instead of deleting
 	# late positive modifiers at a hard x6 cap.
-	assert(is_equal_approx(game.soften_damage_multiplier(6.0), 6.0), "Soft-cap threshold drifted")
-	assert(game.soften_damage_multiplier(8.0) > game.soften_damage_multiplier(7.0), "Soft cap has a zero-marginal region")
-	assert(game.soften_damage_multiplier(8.0) < 8.0, "Soft cap no longer compresses extreme stacking")
+	# 阈值本身是可调数值（现为 8.0），断言只校验曲线性质而不是钉死具体数字。
+	assert(is_equal_approx(game.soften_damage_multiplier(4.0), 4.0), "Soft cap started compressing below the threshold")
+	assert(game.soften_damage_multiplier(14.0) > game.soften_damage_multiplier(12.0), "Soft cap has a zero-marginal region")
+	assert(game.soften_damage_multiplier(20.0) < 20.0, "Soft cap no longer compresses extreme stacking")
 	var capped_base: float = game.soften_damage_multiplier(9.0)
 	var capped_boosted: float = game.soften_damage_multiplier(game.raw_damage_multiplier_from_effective(capped_base) * 1.2)
 	assert(capped_boosted > capped_base, "Late mastery/hand modifier reduced an already-softened multiplier")

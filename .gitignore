@@ -18,3 +18,5 @@ work/*.log
 .DS_Store
 Thumbs.db
 desktop.ini
+# 平衡模拟输出
+work/sim_out.txt

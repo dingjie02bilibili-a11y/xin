@@ -58,6 +58,15 @@ func _process(delta: float) -> void:
 	var bob := 4.0 * sin(life_time * pet_idle_speed() + formation_index * 1.37)
 	var desired := owner_player.global_position + leash_direction * (pet_leash_distance() + bob)
 	desired += pet_separation_offset()
+	# 充满能量却够不着目标时主动扑向最近的敌人，而不是干等在玩家身后。
+	# 玩家 260 移速永远甩得开 105 移速的追猎者，光环/卫星类宠物否则大半时间零输出。
+	if cooldown_ratio() <= 0.02 and game.has_method("pet_hunt_target"):
+		var hunt: Vector2 = game.pet_hunt_target()
+		if hunt != Vector2.ZERO:
+			var anchor: Vector2 = owner_player.global_position
+			var lunge: Vector2 = hunt - anchor
+			if lunge.length() > 1.0:
+				desired = anchor + lunge.normalized() * minf(lunge.length(), 300.0)
 	var control_state := pet_control_state()
 	var control_target = pet_control_target()
 	if control_state in ["stolen", "charmed"] and is_instance_valid(control_target):

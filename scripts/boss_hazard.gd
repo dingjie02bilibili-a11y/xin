@@ -4,8 +4,8 @@ extends Node2D
 var target: Player
 var damage := 10.0
 var radius := 66.0
-var telegraph_time := 0.85
-var active_time := 3.1
+var telegraph_time := 1.05
+var active_time := 2.6
 var age := 0.0
 var hit_timer := 0.0
 

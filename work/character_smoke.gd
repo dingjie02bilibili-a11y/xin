@@ -21,9 +21,9 @@ func run_test() -> void:
 		assert(game.player.character_name == character, "Character did not start: " + character)
 		assert(game.make_character_portrait(character) != null, "Portrait missing: " + character)
 		match character:
-			"守卫": assert(game.has_orbit and game.orbit_count == 2, "Guardian orbit start failed")
+			"守卫": assert(game.has_orbit and game.orbit_count == 3, "Guardian orbit start failed")
 			"影舞者": assert(game.stats.crit >= 0.25 and game.player.speed > 280.0, "Dancer crit/mobility failed")
-			"星火使": assert(game.has_aura and game.aura_radius == 135.0, "Ember aura start failed")
+			"星火使": assert(game.has_aura and game.aura_radius == 205.0, "Ember aura start failed")
 		game.queue_free()
 		await process_frame
 	save.data = original_save

@@ -56,19 +56,20 @@ var collapse_time := 0.0
 var collapse_stacks := 0
 var phase_mark_time := 0.0
 var visual_time := 0.0
+const BOSS_CONTACT_SCALE := 0.5
 
 func setup(enemy_kind: String, difficulty: float, player_ref: Player) -> void:
 	kind = enemy_kind
 	target = player_ref
 	match kind:
 		"追猎者":
-			health = 24.0; speed = 105.0; damage = 8.0; xp_value = 4; radius = 15.0; tint = Color("ff5c8a"); ai_role = "chaser"; move_acceleration = 680.0
+			health = 24.0; speed = 105.0; damage = 5.5; xp_value = 4; radius = 15.0; tint = Color("ff5c8a"); ai_role = "chaser"; move_acceleration = 680.0
 		"疾行兽":
-			health = 15.0; speed = 170.0; damage = 6.0; xp_value = 5; radius = 12.0; tint = Color("f97316"); ai_role = "flanker"; move_acceleration = 980.0; turn_acceleration = 1450.0
+			health = 15.0; speed = 170.0; damage = 4.0; xp_value = 5; radius = 12.0; tint = Color("f97316"); ai_role = "flanker"; move_acceleration = 980.0; turn_acceleration = 1450.0
 		"重甲怪":
-			health = 75.0; speed = 60.0; damage = 14.0; xp_value = 9; radius = 23.0; tint = Color("a78bfa"); ai_role = "tank"; move_acceleration = 300.0; turn_acceleration = 440.0; move_deceleration = 420.0
+			health = 75.0; speed = 60.0; damage = 9.0; xp_value = 9; radius = 23.0; tint = Color("a78bfa"); ai_role = "tank"; move_acceleration = 300.0; turn_acceleration = 440.0; move_deceleration = 420.0
 		"咒术师":
-			health = 42.0; speed = 72.0; damage = 10.0; xp_value = 10; radius = 17.0; tint = Color("22d3ee"); ai_role = "caster"; move_acceleration = 460.0; turn_acceleration = 760.0
+			health = 42.0; speed = 72.0; damage = 7.0; xp_value = 10; radius = 17.0; tint = Color("22d3ee"); ai_role = "caster"; move_acceleration = 460.0; turn_acceleration = 760.0
 		"星渊追猎者":
 			health = 760.0; speed = 112.0; damage = 16.0; xp_value = 50; radius = 46.0; tint = Color("fb7185"); is_boss = true; boss_style = "pursuit"; move_acceleration = 760.0; turn_acceleration = 1050.0
 		"星渊禁锢者":
@@ -91,6 +92,13 @@ func set_chapter_tier(chapter: int) -> void:
 	boss_chapter = maxi(1, chapter)
 	boss_tier = 1 + int(floor(maxi(0, boss_chapter - 1) / 3.0))
 	boss_tier = mini(4, boss_tier)
+	damage *= 1.0 + float(boss_chapter - 1) * 0.09
+
+# 主线 Boss 的血量不能再由「原型基础值 × 时间线性难度」决定：三种原型在六章里
+# 循环两遍，第 4 章的追猎者(760)会比第 3 章的裁决者(1080)还弱 23%。改为按章直接指定。
+func set_mainline_health(value: float) -> void:
+	health = value
+	max_health = value
 
 func affix_summary() -> String:
 	var names: Array[String] = []
@@ -139,8 +147,10 @@ func _physics_process(delta: float) -> void:
 	velocity = move_velocity * (0.58 if frost_time > 0.0 and not is_boss else (0.72 if frost_time > 0.0 else 1.0)) + knockback
 	move_and_slide()
 	if to_target.length() < radius + 20.0 and contact_timer <= 0.0:
-		target.take_damage(damage)
-		contact_timer = 0.7
+		# Boss 的威胁应该来自可预警、可闪避的招式，而不是碰一下就掉一大块。
+		# 追击型 Boss 冲刺速度高于玩家移速，纯接触伤害等于无法规避的固定 DPS。
+		target.take_damage(damage * BOSS_CONTACT_SCALE if is_boss else damage)
+		contact_timer = 1.0 if is_boss else 0.95
 	if is_boss:
 		queue_redraw()
 
@@ -222,7 +232,7 @@ func _update_boss(delta: float, to_target: Vector2) -> void:
 				dash_time = 0.48
 				dash_direction = desired
 				# 预警冲锋终点，迫使玩家在突进前就选择侧移路线。
-				hazard_requested.emit(global_position + desired * 290.0, damage * 0.7, 72.0)
+				hazard_requested.emit(global_position + desired * 290.0, damage * 0.55, 72.0)
 				if boss_tier >= 2:
 					hazard_requested.emit(global_position + desired.rotated(0.55) * 105.0, damage * 0.34, 42.0)
 					hazard_requested.emit(global_position + desired.rotated(-0.55) * 105.0, damage * 0.34, 42.0)
@@ -235,13 +245,13 @@ func _update_boss(delta: float, to_target: Vector2) -> void:
 			rotation = lerp_angle(rotation, desired.angle(), delta * 8.0)
 		"control":
 			if boss_action_timer <= 0.0:
-				boss_action_timer = 2.55 * _action_cadence()
+				boss_action_timer = 3.30 * _action_cadence()
 				var center := target.global_position
 				var trap_count := mini(6, (4 if affixes.has("rapid_pattern") else 3) + boss_tier - 1)
 				for i in trap_count:
 					var angle := TAU * i / trap_count + Time.get_ticks_msec() * 0.001
 					# 圆环向中心收拢并彼此重叠：原地停留也会被命中，仍可横向离开预警区躲避。
-					hazard_requested.emit(center + Vector2.from_angle(angle) * 62.0, damage * 0.55, 96.0)
+					hazard_requested.emit(center + Vector2.from_angle(angle) * 62.0, damage * 0.40, 96.0)
 				_open_weakness_window()
 			if to_target.length() < 330.0:
 				desired = -desired
@@ -257,7 +267,7 @@ func _update_boss(delta: float, to_target: Vector2) -> void:
 					dramatic_attack.emit(8.0)
 					var burst_count := mini(10, (7 if affixes.has("rapid_pattern") else 5) + (boss_tier - 1) * 2)
 					for i in burst_count:
-						fired.emit(global_position, charge_direction.rotated((i - (burst_count - 1) * 0.5) * 0.16), damage * 0.78)
+						fired.emit(global_position, charge_direction.rotated((i - (burst_count - 1) * 0.5) * 0.16), damage * 0.65)
 					for i in 3:
 						hazard_requested.emit(global_position + charge_direction.rotated((i - 1) * 0.42) * 150.0, damage * 0.42, 48.0)
 					boss_action_timer = 2.7 * _action_cadence()
