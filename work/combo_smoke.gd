@@ -42,8 +42,20 @@ func run_test() -> void:
 	target.health = 100.0
 	target.shield_time = 2.0
 	target.take_damage(10.0, Vector2.ZERO, "direct")
-	assert(is_equal_approx(target.health, 90.0), "Shield incorrectly reduced non-pulse damage")
-	target.take_damage(10.0, Vector2.ZERO, "pulse")
-	assert(is_equal_approx(target.health, 86.5), "Shield did not reduce pulse damage")
+	assert(is_equal_approx(target.health, 90.0), "Prism shield must not reduce skill damage")
+	# 棱镜屏障真正生效的地方是供能：蓝盾期间供能弹只送一半能量。
+	target.is_boss = true
+	target.set_affixes(["prism_shield"] as Array[String])
+	target.add_to_group("bosses")
+	var pet_id: String = str(game.active_core_skill_ids()[0])
+	game.pet_energy[pet_id] = 0.0
+	game.on_pet_energy_received(pet_id, 0.4)
+	var shielded_gain: float = float(game.pet_energy.get(pet_id, 0.0))
+	target.shield_time = 0.0
+	game.pet_energy[pet_id] = 0.0
+	game.on_pet_energy_received(pet_id, 0.4)
+	var clear_gain: float = float(game.pet_energy.get(pet_id, 0.0))
+	assert(shielded_gain < clear_gain - 0.001, "Prism shield no longer halves incoming energy")
+	target.remove_from_group("bosses")
 	print("COMBO_SMOKE_OK evolutions=", game.evolutions.size(), " crit=", game.stats.crit, " orbit=", game.orbit_count)
 	quit()

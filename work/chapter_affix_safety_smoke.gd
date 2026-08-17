@@ -10,6 +10,11 @@ func run_test() -> void:
 	await process_frame
 	game.start_game_after_prologue()
 	await process_frame
+	# 用例验证的是「只剩一只宠物时不会被剥夺」，自行构造该状态，
+	# 不依赖开局宠物数量（现在每个角色开局带两只）。
+	game.equipped_cards.assign([str(game.active_core_skill_ids()[0])])
+	game.refresh_derived_card_effects()
+	await process_frame
 	assert(game.normally_castable_pet_ids().size() == 1, "Safety test needs one starting pet")
 	for style in ["pursuit", "control", "burst"]:
 		for sample in 40:

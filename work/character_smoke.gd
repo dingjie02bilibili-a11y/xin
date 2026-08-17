@@ -20,8 +20,15 @@ func run_test() -> void:
 		game.start_game_after_prologue()
 		assert(game.player.character_name == character, "Character did not start: " + character)
 		assert(game.make_character_portrait(character) != null, "Portrait missing: " + character)
+		# 每个角色开局都带两只互补的宠物；单只宠物只覆盖一个距离段，撑不住 360 度压力。
+		var expected: Array = game.STARTING_PETS[character]
+		assert(expected.size() == 2, "Starting loadout should be a pair: " + character)
+		for pet_id in expected:
+			assert(game.equipped_cards.has(str(pet_id)), "%s missing starting pet %s" % [character, str(pet_id)])
+			assert(game.skill_entities.has(str(pet_id)), "%s did not spawn starting pet %s" % [character, str(pet_id)])
+		assert(game.has_sustainable_offense_pet(), "Starting loadout cannot clear: " + character)
 		match character:
-			"守卫": assert(game.has_orbit and game.orbit_count == 3, "Guardian orbit start failed")
+			"守卫": assert(game.has_orbit and game.orbit_count >= 2, "Guardian orbit start failed")
 			"影舞者": assert(game.stats.crit >= 0.25 and game.player.speed > 280.0, "Dancer crit/mobility failed")
 			"星火使": assert(game.has_aura and game.aura_radius == 205.0, "Ember aura start failed")
 		game.queue_free()

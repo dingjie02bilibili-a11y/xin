@@ -66,7 +66,7 @@ func _process(delta: float) -> void:
 			var anchor: Vector2 = owner_player.global_position
 			var lunge: Vector2 = hunt - anchor
 			if lunge.length() > 1.0:
-				desired = anchor + lunge.normalized() * minf(lunge.length(), 300.0)
+				desired = anchor + lunge.normalized() * minf(lunge.length(), 380.0)
 	var control_state := pet_control_state()
 	var control_target = pet_control_target()
 	if control_state in ["stolen", "charmed"] and is_instance_valid(control_target):

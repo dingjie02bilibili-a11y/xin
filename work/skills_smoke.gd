@@ -14,6 +14,10 @@ func run_test() -> void:
 	root.add_child(game)
 	await process_frame
 	game.start_game_after_prologue()
+	# 开局带两只宠物会把 5 格卡组撑满并触发替换流程；本用例只验证技能是否生效。
+	game.card_slots = 7
+	game.equipped_cards.clear()
+	game.refresh_derived_card_effects()
 	for id in ["phase_step", "thunder_orb", "frost_brand", "soul_siphon"]:
 		give(game, id)
 	assert(game.phase_step_enabled and game.thunder_level == 1 and game.soul_siphon_level == 1, "New skill upgrades did not apply")

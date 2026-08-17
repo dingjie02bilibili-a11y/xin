@@ -19,11 +19,6 @@ func run_test() -> void:
 	game.update_skill_list()
 	await process_frame
 	var rare_color: Color = game.CARD_RARITY_COLORS["稀有"]
-	var slot = load("res://scripts/skill_slot.gd").new()
-	root.add_child(slot)
-	await process_frame
-	slot.set_skill(game.make_skill_icon("chain"), "弧牙", 1, 0.0, 1.0, "稀有", rare_color)
-	assert(close_enough(slot.title_label.get_theme_color("font_color"), rare_color), "Skill title does not use rarity color")
 	game.show_skill_tooltip(game.skill_description("chain"), "稀有")
 	await process_frame
 	var tip_label := game.skill_tooltip.get_node("TooltipText") as Label

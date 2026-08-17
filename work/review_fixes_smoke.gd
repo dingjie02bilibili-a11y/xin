@@ -43,12 +43,16 @@ func run_test() -> void:
 	print("REVIEW_FIXES_STAGE energy")
 
 	# Fragile now has both its advertised reward and a real incoming-damage cost.
+	# 暴击是随机的，比较前必须关掉，否则这条断言本身是抛硬币。
+	var saved_crit: float = float(game.stats.crit)
+	game.stats.crit = 0.0
 	var normal_damage: float = game.calculate_skill_damage(10.0, "chain")
 	game.card_drawbacks["chain"] = "fragile"
 	game.refresh_derived_card_effects()
 	var fragile_damage: float = game.calculate_skill_damage(10.0, "chain")
 	assert(fragile_damage > normal_damage * 1.20, "Fragile lost its outgoing damage reward")
 	assert(game.player.incoming_damage_multiplier > 1.17, "Fragile still has no incoming-damage drawback")
+	game.stats.crit = saved_crit
 	game.card_drawbacks.erase("chain")
 	game.refresh_derived_card_effects()
 	print("REVIEW_FIXES_STAGE fragile")
@@ -87,6 +91,8 @@ func run_test() -> void:
 	print("REVIEW_FIXES_STAGE burn")
 
 	# Rental debt survives an empty wallet and is collected from later income.
+	if not game.equipped_cards.has("area"):
+		game.equipped_cards.append("area")
 	game.card_drawbacks["area"] = "rental"
 	game.star_shards = 0
 	game.show_shop(true)

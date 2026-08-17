@@ -57,6 +57,7 @@ var collapse_stacks := 0
 var phase_mark_time := 0.0
 var visual_time := 0.0
 const BOSS_CONTACT_SCALE := 0.5
+const BOSS_HIT_CAP := 0.06
 
 func setup(enemy_kind: String, difficulty: float, player_ref: Player) -> void:
 	kind = enemy_kind
@@ -77,7 +78,8 @@ func setup(enemy_kind: String, difficulty: float, player_ref: Player) -> void:
 		"星渊裁决者":
 			health = 1080.0; speed = 48.0; damage = 20.0; xp_value = 70; radius = 52.0; tint = Color("facc15"); is_boss = true; boss_style = "burst"; move_acceleration = 300.0; turn_acceleration = 470.0
 	health *= difficulty
-	damage *= 0.72 + difficulty * 0.18
+	# 原来的斜率让六章的接触伤害只涨 10%，后期压力全部来自数量、缺少「这只怪很危险」的层次。
+	damage *= 0.40 + difficulty * 0.62
 	max_health = health
 	strafe_sign = -1.0 if randf() < 0.5 else 1.0
 	decision_timer = randf_range(0.55, 1.4)
@@ -334,9 +336,10 @@ func take_damage(amount: float, push: Vector2 = Vector2.ZERO, damage_tag := "dir
 		return
 	if weakness_time > 0.0:
 		amount *= 1.75
-	# Shield only intercepts explicitly tagged pulse shots.
-	if shield_time > 0.0 and damage_tag == "pulse":
-		amount *= 0.35
+	if is_boss:
+		# 单次伤害封顶在最大生命的 6%：Boss 是关卡高潮，不该被一次乘算爆发在
+		# 三五秒内融掉。这条同时把「同一局里 5 秒和 40 秒并存」的方差压回来。
+		amount = minf(amount, max_health * BOSS_HIT_CAP)
 	health -= amount
 	knockback += push
 	hit_flash = 0.075

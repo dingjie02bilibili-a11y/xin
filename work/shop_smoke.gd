@@ -13,7 +13,7 @@ func run_test() -> void:
 	assert(game.star_shards == 0, "Run did not start with an empty wallet")
 	game.gain_star_shards(30)
 	assert(game.star_shards == 30 and game.total_star_shards == 30, "Shard wallet did not update")
-	assert(game.state == game.GameState.PLAYING and game.pending_levels == 0, "Collecting shards incorrectly triggered an upgrade")
+	assert(game.state == game.GameState.PLAYING and game.shop_overlay == null, "Collecting shards incorrectly opened a selection")
 	game.show_shop(true)
 	await process_frame
 	assert(game.shop_overlay != null and game.shop_goods.size() == 3, "Shop did not build three offers")

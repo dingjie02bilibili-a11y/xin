@@ -15,6 +15,10 @@ func run_test() -> void:
 			var chapter_one_affixes: Array[String] = game.roll_boss_affixes(1, style)
 			for forbidden in ["sealed_hand", "pet_thief", "pet_charm", "reverse_shuffle"]:
 				assert(not chapter_one_affixes.has(forbidden), "Chapter 1 rolled deprivation: " + forbidden)
+	# 只剩一只宠物时不应被封印/夺走/魅惑，自行构造该状态再验证
+	game.equipped_cards.assign([str(game.active_core_skill_ids()[0])])
+	game.refresh_derived_card_effects()
+	await process_frame
 	var safety_boss = game.spawn_enemy("星渊禁锢者", true)
 	game.apply_boss_card_seal(safety_boss, 4.2)
 	game.apply_boss_pet_theft(safety_boss, 5.2)

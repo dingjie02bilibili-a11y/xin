@@ -12,17 +12,18 @@
 
 - `WASD` 或方向键：移动
 - `Esc` 或 `P`：暂停 / 继续
-- 主角每轮为每只未充满的星灵宠物各发射一枚供能弹；宠物充满能量且范围内存在目标时自动释放技能
+- 主角每轮为每只未充满的星灵宠物各发射一枚供能弹；宠物充满能量后自动释放技能，够不着目标时会主动扑上去
 - `F2`：仅编辑器调试模式可用，获得 10 星屑
 
 ## 游戏循环
 
 - 主线共六章，Boss 在 1、2、3、4、5 分钟和 5分55秒出现。
 - 击败敌人获得星屑；星屑用于定时出现的商店，不会触发经验升级。
-- 商店出售一次性角色训练、宠物、构筑规则、遗物改造、符文、补充包与远征许可。
+- 商店出售一次性角色训练、宠物、构筑规则、遗物改造、符文、补充包、远征许可与可反复投入的星屑熔炉。
 - 宠物与规则牌进入最多 7 格的卡组；每次宠物释技都按卡组从左到右结算加算、乘算、邻接和牌型。
 - 宠物使用连续供能：超出施法需求的能量会保留，供下一次释放使用。
-- 击败 Boss 后从遗物共鸣或宠物版本中选择奖励。
+- 每个角色开局携带两只互补的星灵宠物。
+- 击败 Boss 后从遗物共鸣或宠物版本中选择奖励，并获得最大生命、护甲与大额回复。
 - 完成第六章后可以胜利结算，也可以继续进入无尽挑战。
 - 所有战斗强化只在当前远征生效；局外仅保留角色、成就和故事解锁，不提供永久属性加成。
 - 存档位于 Godot 的 `user://starfall_save.json`。
@@ -46,11 +47,14 @@
 - `scripts/enemy.gd`：敌人 AI、Boss 行为、词缀与元素状态
 - `scripts/skill_entity.gd`：宠物实体、跟随运动与表现
 - `scripts/save_manager.gd`：JSON 存档、成就、角色和故事解锁
-- `work/*_smoke.gd`：无窗口回归测试
+- `work/*_smoke.gd`：无窗口回归测试（含数值审计与无尽模式门禁）
+- `work/balance_sim.gd`：无窗口战斗模拟，按固定步长驱动真实游戏循环并逐章输出难度压力
 
 ## 核心平衡入口
 
-- 主线与商店节奏：`RUN_DURATION`、`MAINLINE_BOSS_SCHEDULE`、`FIRST_SHOP_TIME`、`SHOP_INTERVAL`
+- 主线与商店节奏：`MAINLINE_BOSS_SCHEDULE`、`MAINLINE_BOSS_HEALTH`、`FIRST_SHOP_TIME`、`SHOP_INTERVAL`
+- 开局配置与关卡奖励：`STARTING_PETS`、`BOSS_CLEAR_HEAL`、`BOSS_CLEAR_MAX_HEALTH`、`BOSS_CLEAR_ARMOR`
+- 经济沉淀：`FORGE_BASE_PRICE`、`FORGE_STEP_PRICE`、`FORGE_ENERGY_GAIN`、`FORGE_ENERGY_CAP`
 - 卡牌与稀有度：`UPGRADES`、`card_rarity`、`card_shop_price`
 - 供能需求：`PET_ENERGY_REQUIREMENTS`
 - 敌人基础属性：`scripts/enemy.gd` 的 `setup`

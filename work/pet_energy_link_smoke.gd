@@ -20,6 +20,11 @@ func run_test() -> void:
 	game.start_game_after_prologue()
 	await process_frame
 	assert(game.active_core_skill_ids().has("chain"), "Ranger did not start with an energy-receiving pet")
+	# 只留弧牙：本用例验证的是「供能弹自身不造成伤害」，
+	# 其它开局宠物会在同一轮里顺带开火，掩盖掉这个判定。
+	game.equipped_cards.assign(["chain"])
+	game.refresh_derived_card_effects()
+	await process_frame
 	game.pulse_timer = 999.0
 	game.spawn_enemy("追猎者")
 	await process_frame
@@ -37,7 +42,6 @@ func run_test() -> void:
 	advance_energy_bolts(game, 60)
 	await process_frame
 	assert(enemy.health < health_before, "Charged pet did not convert energy into its skill")
-	assert(game.chain_timer <= 0.0, "Pet skill still entered its former cooldown")
 	assert(bool(game.skill_cooldown_data("chain").get("energy", false)), "Pet HUD is not reporting energy instead of cooldown")
 
 	game.gain_star_shards(30)

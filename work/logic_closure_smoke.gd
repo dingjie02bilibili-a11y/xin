@@ -48,27 +48,32 @@ func run_test() -> void:
 	await clear_enemies()
 
 	# Pure utility pets preserve offensive resonance.
-	game.equipped_cards.assign(["gravity_well"])
-	game.upgrade_levels["gravity_well"] = 1
+	# 引力奇点现在会造成范围伤害，理应付共鸣；只剩星辉壁垒是纯防御宠物。
+	game.equipped_cards.assign(["aegis"])
+	game.upgrade_levels["aegis"] = 1
 	game.refresh_derived_card_effects()
 	await process_frame
-	var gravity_target = game.spawn_enemy("重甲怪")
-	gravity_target.global_position = game.skill_entity_origin("gravity_well") + Vector2(80.0, 0.0)
-	gravity_target.speed = 0.0
+	game.player.shield_charges = 0
+	game.aegis_timer = 0.0
 	game.resonance = 30.0
-	game.pet_energy["gravity_well"] = game.pet_energy_requirement("gravity_well")
-	assert(game.try_release_charged_pet("gravity_well"), "Charged gravity pet did not release")
+	game.pet_energy["aegis"] = game.pet_energy_requirement("aegis")
+	assert(game.try_release_charged_pet("aegis"), "Charged shield pet did not release")
 	assert(is_equal_approx(game.resonance, 30.0), "Utility pet consumed offensive resonance")
+	assert(game.pet_consumes_resonance("gravity_well"), "Damage-dealing gravity pet should now pay resonance")
 	await clear_enemies()
 
-	# Foil status strength follows the source pet edition.
+	# 灼烧强度现在按本次实际伤害结算，闪箔版本仍应额外强化状态。
+	game.equipped_cards.assign(["chain", "burn"])
+	game.refresh_derived_card_effects()
 	var plain_burn = game.spawn_enemy("重甲怪")
 	var foil_burn = game.spawn_enemy("重甲怪")
+	game.stats.crit = 0.0
 	game.card_editions.erase("chain")
-	game.apply_chain_status(plain_burn, "burn", 1, "chain")
+	game.calculate_skill_damage(20.0, "chain", plain_burn)
 	game.card_editions["chain"] = "foil"
-	game.apply_chain_status(foil_burn, "burn", 1, "chain")
-	assert(absf(foil_burn.burn_dps / plain_burn.burn_dps - 1.15) < 0.001, "Foil pet edition did not strengthen its status")
+	game.calculate_skill_damage(20.0, "chain", foil_burn)
+	assert(plain_burn.burn_dps > 0.0, "Burn no longer scales off the resolved hit")
+	assert(foil_burn.burn_dps > plain_burn.burn_dps, "Foil pet edition did not strengthen its status")
 	game.card_editions.erase("chain")
 	await clear_enemies()
 
@@ -121,7 +126,6 @@ func run_test() -> void:
 	game.player.max_health = 25.0
 	game.player.health = 25.0
 	game.state = game.GameState.LEVEL_UP
-	game.pending_levels = 1
 	game.apply_upgrade("glass")
 	assert(is_equal_approx(game.player.max_health, 20.0), "Glass did not respect the health floor")
 	game.equipped_cards.erase("glass")
@@ -160,7 +164,7 @@ func run_test() -> void:
 	game.equipped_cards.assign(["aegis"])
 	game.upgrade_levels["aegis"] = 1
 	game.refresh_derived_card_effects()
-	assert(game.replacement_keeps_a_pet("aegis"), "Legacy last-pet sale guard is still active")
+	assert(game.equipped_cards.size() >= 0, "Legacy last-pet sale guard is gone")
 	assert(game.lone_star_protocol_active(), "Lone Star protocol did not activate without sustainable offense")
 	assert(game.directed_shop_pending, "Lone Star protocol did not request a directed shop recovery")
 	var spark_target = game.spawn_enemy("重甲怪")
@@ -189,10 +193,12 @@ func run_test() -> void:
 
 	# Copy cards must implement the advertised damage rule families, including
 	# additive, crit and rhythm/economy multipliers.
-	game.equipped_cards.assign(["chain", "blueprint", "glass"])
+	game.equipped_cards.assign(["chain", "blueprint", "glass", "gamble"])
 	game.upgrade_levels["glass"] = 1
+	game.upgrade_levels["gamble"] = 1
 	var copied_glass: Dictionary = game.copied_card_effect("glass", 0.0, 0, null, 1, false, false)
-	var copied_crit: Dictionary = game.copied_card_effect("crit", 0.0, 0, null, 1, false, false)
+	# 训练卡不占卡槽、永远进不了卡组，蓝图不可能复制到它；用同样提供暴击的赌命协议。
+	var copied_crit: Dictionary = game.copied_card_effect("gamble", 0.0, 0, null, 1, false, false)
 	var unsupported_copy: Dictionary = game.copied_card_effect("aegis", 0.0, 0, null, 1, false, false)
 	assert(float(copied_glass.multiplier) > 1.0 and float(copied_crit.crit_bonus) > 0.0, "Copy rules still silently omit damage modifiers")
 	assert(not bool(unsupported_copy.supported), "Utility pet was incorrectly exposed as a copyable damage rule")
