@@ -56,6 +56,8 @@ var collapse_time := 0.0
 var collapse_stacks := 0
 var phase_mark_time := 0.0
 var visual_time := 0.0
+var cuts_tethers := false
+var tether_bait := Vector2.ZERO
 const BOSS_CONTACT_SCALE := 0.5
 const BOSS_HIT_CAP := 0.06
 
@@ -79,8 +81,10 @@ func setup(enemy_kind: String, difficulty: float, player_ref: Player) -> void:
 			health = 1080.0; speed = 48.0; damage = 20.0; xp_value = 70; radius = 52.0; tint = Color("facc15"); is_boss = true; boss_style = "burst"; move_acceleration = 300.0; turn_acceleration = 470.0
 	health *= difficulty
 	# 原来的斜率让六章的接触伤害只涨 10%，后期压力全部来自数量、缺少「这只怪很危险」的层次。
-	damage *= 0.40 + difficulty * 0.62
+	# 攻击范围收进屏幕后敌人必然更靠近玩家，接触伤害相应下调
+	damage *= (0.40 + difficulty * 0.62) * 0.88
 	max_health = health
+	cuts_tethers = kind in ["重甲怪", "咒术师"]
 	strafe_sign = -1.0 if randf() < 0.5 else 1.0
 	decision_timer = randf_range(0.55, 1.4)
 	queue_redraw()
@@ -193,6 +197,11 @@ func _update_normal(delta: float, to_target: Vector2) -> void:
 				shoot_timer = randf_range(1.45, 1.9)
 				var shot_direction := (predicted_target - global_position).normalized()
 				fired.emit(global_position, shot_direction, damage)
+	# 重甲怪与咒术师会主动去剪供能链条：普通怪只是路过误伤，精英是奔着链条去的。
+	if cuts_tethers and tether_bait != Vector2.ZERO:
+		var to_bait := tether_bait - global_position
+		if to_bait.length() > 8.0:
+			desired = desired.lerp(to_bait.normalized(), 0.72).normalized()
 	desired = (desired + separation_steering() * (0.85 if ai_role != "tank" else 0.42)).normalized()
 	var speed_multiplier := 1.75 if ai_role == "flanker" and lunge_timer > 0.0 else 1.0
 	steer_move_velocity(desired, speed * speed_multiplier, delta, 1.7 if lunge_timer > 0.0 else 1.0)

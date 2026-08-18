@@ -67,6 +67,15 @@ func _process(delta: float) -> void:
 			var lunge: Vector2 = hunt - anchor
 			if lunge.length() > 1.0:
 				desired = anchor + lunge.normalized() * minf(lunge.length(), 380.0)
+	# 链条被切断：宠物停摆，只以很慢的速度飘向玩家，等玩家走过来重新接上。
+	if not tether_connected():
+		var to_player: Vector2 = owner_player.global_position - global_position
+		if to_player.length() > 1.0:
+			global_position += to_player.normalized() * game.TETHER_DRIFT_SPEED * delta
+		follow_velocity = Vector2.ZERO
+		rotation = lerp_angle(rotation, to_player.angle(), minf(1.0, delta * 3.0))
+		queue_redraw()
+		return
 	var control_state := pet_control_state()
 	var control_target = pet_control_target()
 	if control_state in ["stolen", "charmed"] and is_instance_valid(control_target):
@@ -151,6 +160,11 @@ func cooldown_ratio() -> float:
 	var cd: Dictionary = game.skill_cooldown_data(skill_id)
 	return clampf(float(cd.remaining) / maxf(0.01, float(cd.total)), 0.0, 1.0)
 
+func tether_connected() -> bool:
+	if game == null or not game.has_method("pet_link_connected"):
+		return true
+	return bool(game.pet_link_connected(skill_id))
+
 func pet_control_state() -> String:
 	if game == null or not game.has_method("core_pet_control_state"):
 		return "normal"
@@ -208,8 +222,12 @@ func _draw() -> void:
 		scale_factor += cast_flash * 1.25
 	if wake_flash > 0.0:
 		scale_factor += sin((0.48 - wake_flash) * 18.0) * wake_flash * 0.18
+	var severed := not tether_connected()
 	var body_color := color if not weak else color.lerp(Color("596275"), 0.70)
 	var alpha := 1.0 if not weak else 0.48 + sin(life_time * 7.0) * 0.06
+	if severed:
+		body_color = body_color.lerp(Color("3f4756"), 0.62)
+		alpha *= 0.62
 	var edition_id := str(game.card_editions.get(skill_id, ""))
 	if edition_id == "polychrome":
 		body_color = Color.from_hsv(fmod(life_time * 0.16 + formation_index * 0.11, 1.0), 0.72, 1.0)
@@ -243,6 +261,16 @@ func _draw() -> void:
 		draw_control_overlay(control_state, body_color, alpha, scale_factor)
 	if cast_flash > 0.0:
 		draw_line(Vector2(17, 0), Vector2(29, 0), Color(body_color, 0.85 * alpha), 2.6, true)
+	if severed:
+		# 断口：残留的半截链节 + 呼吸的求救环，走近即可重连
+		var flare := 0.5 + 0.5 * sin(life_time * 4.4)
+		draw_arc(Vector2.ZERO, 30.0 + flare * 5.0, 0, TAU, 28, Color("ef7791", 0.35 + flare * 0.35), 2.4)
+		var stub := to_local(owner_player.global_position) if is_instance_valid(owner_player) else Vector2.RIGHT
+		if stub.length() > 1.0:
+			var dir := stub.normalized()
+			for i in 3:
+				var at := dir * (22.0 + i * 11.0)
+				draw_circle(at, 3.4 - i * 0.8, Color("ef7791", (0.6 - i * 0.16) * flare))
 
 func draw_control_overlay(control_state: String, color: Color, alpha: float, s: float) -> void:
 	var source = pet_control_target()

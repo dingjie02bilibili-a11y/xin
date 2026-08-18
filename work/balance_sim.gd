@@ -50,7 +50,7 @@ func run_batch() -> void:
 	save.data.intro_seen = true
 	save.data.achievements = ["boss_breaker", "survive_three", "combo_adept", "streak_master", "molten_master"]
 
-	emit("角色   存活  Boss 死亡 | 每章场均敌人        | 每章释技次数        | 每章受伤            | 每章末HP%           | BossTTK             | 卡组/宠 星屑得/花/余")
+	emit("角色   存活  Boss 死亡 | 每章场均敌人        | 每章断链时长%       | 每章受伤            | 每章末HP%           | BossTTK             | 卡组/宠 星屑得/花/余")
 	var grand: Array[Dictionary] = []
 	for character in characters:
 		var runs: Array[Dictionary] = []
@@ -106,6 +106,8 @@ func simulate_one(character: String, run_seed: int) -> Dictionary:
 		elapsed += DT
 		track_bosses(elapsed)
 		var alive := get_nodes_in_group("enemies").size()
+		if int(game.pet_link_broken.size()) > 0:
+			bucket.severed_frames += 1
 		bucket.alive_sum += alive
 		bucket.alive_max = maxi(int(bucket.alive_max), alive)
 		samples += 1
@@ -140,10 +142,11 @@ func simulate_one(character: String, run_seed: int) -> Dictionary:
 
 func new_bucket(index: int, kills_so_far: int) -> Dictionary:
 	return {"chapter": index, "kills": kills_so_far, "alive_sum": 0.0, "alive_avg": 0.0,
-		"alive_max": 0, "damage": 0.0, "earned": 0, "spent": 0, "hp_pct": 0.0, "deck": 0, "hands": 0}
+		"alive_max": 0, "damage": 0.0, "earned": 0, "spent": 0, "hp_pct": 0.0, "deck": 0, "hands": 0, "severed_frames": 0, "severed_pct": 0.0}
 
 func close_bucket(bucket: Dictionary, samples: int, last_damage: float, last_earned: int, last_spent: int) -> void:
 	bucket.alive_avg = bucket.alive_sum / maxf(1.0, float(samples))
+	bucket.severed_pct = float(bucket.severed_frames) / maxf(1.0, float(samples)) * 100.0
 	bucket.kills = game.kills - int(bucket.kills)
 	bucket.damage = game.damage_taken_this_run - last_damage
 	bucket.earned = game.total_star_shards - last_earned
@@ -245,8 +248,25 @@ func drive_bot() -> void:
 			if d.length() < 110.0 and d.length() > 1.0:
 				escape += d.normalized() * 1.2
 
+	# 断链的宠物必须去接：不接的话测的是「玩家完全不管链条」的下限，没有参考价值。
+	var severed_pet: Vector2 = Vector2.ZERO
+	var severed_far := 1e9
+	for id in game.active_core_skill_ids():
+		if bool(game.pet_link_connected(str(id))):
+			continue
+		var entity = game.skill_entities.get(str(id))
+		if not is_instance_valid(entity):
+			continue
+		var gap: float = here.distance_to(entity.global_position)
+		if gap < severed_far:
+			severed_far = gap
+			severed_pet = entity.global_position
+
 	var dir: Vector2
-	if escape.length() > 0.05:
+	if severed_pet != Vector2.ZERO and escape.length() <= 0.05:
+		# 危险预警优先于捡宠物，其余情况一律先把伙伴接回来
+		dir = (severed_pet - here).normalized()
+	elif escape.length() > 0.05:
 		dir = escape.normalized()
 	elif flee.length() > 0.05:
 		# 贴脸了：后撤 + 侧移脱离
@@ -454,7 +474,7 @@ func summarise(character: String, runs: Array) -> Dictionary:
 		"character": character, "deaths": deaths, "runs": runs.size(),
 		"seconds": avg(seconds), "bosses": avg(bosses),
 		"alive": col(runs, "alive_avg"), "damage": col(runs, "damage"),
-		"hp": col(runs, "hp_pct"), "ttk": ttk_by_index, "hands": col(runs, "hands"),
+		"hp": col(runs, "hp_pct"), "ttk": ttk_by_index, "hands": col(runs, "hands"), "severed": col(runs, "severed_pct"),
 		"deck": avg(runs.map(func(r): return float(r.deck))),
 		"pets": avg(runs.map(func(r): return float(r.pets))),
 		"earned": avg(runs.map(func(r): return float(r.earned))),
@@ -462,7 +482,7 @@ func summarise(character: String, runs: Array) -> Dictionary:
 		"left": avg(runs.map(func(r): return float(r.left)))}
 	emit("%-5s %4.0fs %4.1f  %d/%d | %s | %s | %s | %s | %s | %.1f/%.1f %.0f/%.0f/%.0f" % [
 		character, summary.seconds, summary.bosses, deaths, runs.size(),
-		fmt(summary.alive, "%4.1f"), fmt(summary.hands), fmt(summary.damage), fmt(summary.hp), fmt(summary.ttk),
+		fmt(summary.alive, "%4.1f"), fmt(summary.severed), fmt(summary.damage), fmt(summary.hp), fmt(summary.ttk),
 		summary.deck, summary.pets, summary.earned, summary.spent, summary.left])
 	return summary
 

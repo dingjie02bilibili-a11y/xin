@@ -51,6 +51,10 @@ func run_test() -> void:
 		"meteor_rain":2.5, "execute":1.0, "gravity_well":4.0}
 	var rows: Array = []
 	for id in pets:
+		# 必须把宠物装进卡组再测：不在卡组里的技能走的是 calculate_damage 回退路径，
+		# 那条路不经过卡链结算，测出来的不是实战数字。
+		game.equipped_cards.assign([str(id)])
+		game.refresh_derived_card_effects()
 		var req: float = game.pet_energy_requirement(str(id))
 		var per: float = avg_damage(float(pets[id]), str(id)) / req
 		rows.append({"id": id, "req": req, "per": per, "eff": per * float(reach[id])})
@@ -100,13 +104,13 @@ func run_test() -> void:
 	var elite_share := []
 	for chapter in range(1, 7):
 		var pool: Array = []
-		for i in 400:
+		for i in 3000:
 			pool.append(game.chapter_enemy_kind(chapter, 0))
 		var elites := 0
 		for kind in pool:
 			if str(kind) in ["重甲怪", "咒术师"]:
 				elites += 1
-		elite_share.append(float(elites) / 400.0)
+		elite_share.append(float(elites) / 3000.0)
 	print("  精英占比 %s" % str(elite_share.map(func(v): return "%.0f%%" % (float(v) * 100.0))))
 	var elite_mono := true
 	for i in range(1, elite_share.size()):

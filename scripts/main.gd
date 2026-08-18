@@ -10,7 +10,7 @@ const BossHazardScript = preload("res://scripts/boss_hazard.gd")
 const DeckCardViewScript = preload("res://scripts/deck_card_view.gd")
 const SkillEffectScript = preload("res://scripts/skill_effect.gd")
 const SkillEntityScript = preload("res://scripts/skill_entity.gd")
-const EnergyBoltScript = preload("res://scripts/energy_bolt.gd")
+const PetTetherViewScript = preload("res://scripts/pet_tether_view.gd")
 const StoryArchiveData = preload("res://scripts/story_archive.gd")
 
 enum GameState { MENU, PLAYING, LEVEL_UP, PAUSED, GAME_OVER }
@@ -18,7 +18,7 @@ enum GameState { MENU, PLAYING, LEVEL_UP, PAUSED, GAME_OVER }
 const WORLD_DRAW_RADIUS := Vector2(1900, 1300)
 const MAINLINE_BOSS_SCHEDULE := [60, 120, 180, 240, 300, 355]
 # 逐章显式指定，保证 Boss 血量曲线单调递增（每章约 +33%）
-const MAINLINE_BOSS_HEALTH := [560.0, 830.0, 1180.0, 1650.0, 2280.0, 3080.0]
+const MAINLINE_BOSS_HEALTH := [560.0, 830.0, 1180.0, 1620.0, 2140.0, 2760.0]
 const ENDLESS_WAVE_DURATION := 45.0
 const FIRST_SHOP_TIME := 38.0
 const SHOP_INTERVAL := 60.0
@@ -40,6 +40,19 @@ const BOSS_CLEAR_HEAL := 0.75
 const BOSS_CLEAR_MAX_HEALTH := 18.0
 const BOSS_CLEAR_ARMOR := 1.0
 const BOSS_SHOP_LOCK_LIMIT := 30.0
+# 视口 1280x720、相机 zoom 1，所以从玩家出发竖直方向只能看到 360——这是紧的那一轴。
+# 过去坠火索敌 950、鸣霄 900，宠物在打玩家根本看不见的东西。所有索敌在这里统一夹紧，
+# 任何新技能都不可能再飘出屏幕。
+const MAX_ENGAGE_RANGE := 360.0
+const PET_DAMAGE_SCALE := 1.18
+# 供能链条：玩家与每只宠物之间是一条持续的能量通道，能量沿它连续流入。
+# 敌人挤到玩家和宠物中间会把链条切断，宠物随即停摆，必须走过去重新接上。
+const TETHER_CUT_COOLDOWN := 3.0
+const TETHER_RECONNECT_GRACE := 1.5
+const TETHER_RECONNECT_RANGE := 44.0
+const TETHER_DRIFT_SPEED := 46.0
+const TETHER_SNAP_RECOIL := 165.0
+const ELITE_CUTTER_KINDS := ["重甲怪", "咒术师"]
 const TRAINING_CARD_IDS := ["damage", "cooldown", "speed", "health", "armor", "regen", "crit", "magnet"]
 const PET_ENERGY_REQUIREMENTS := {
 	"aura":0.9, "orbit":1.1, "satellite_engine":1.1, "chain":2.0,
@@ -411,6 +424,11 @@ var next_shop_time := FIRST_SHOP_TIME
 var shop_pending := false
 var queued_shops := 0
 var boss_engaged_since := -1.0
+var last_damage_color := Color("e8f5ff")
+var effect_pool: Array[SkillEffect] = []
+var pet_link_broken: Dictionary = {}
+var pet_link_grace: Dictionary = {}
+var enemy_cut_cooldown: Dictionary = {}
 var shop_visit := 0
 var shop_goods: Array = []
 var shop_reroll_count := 0
@@ -500,6 +518,7 @@ func _process(delta: float) -> void:
 	queue_redraw()
 	elapsed += delta
 	update_boss_card_disruptions(delta)
+	update_pet_tethers(delta)
 	update_conditional_card_effects(delta)
 	if endless_mode:
 		endless_elapsed += delta
@@ -1480,6 +1499,10 @@ func start_game_after_prologue() -> void:
 	guaranteed_reward_pack = false
 	booster_overlay = null
 	pet_energy.clear()
+	effect_pool.clear()
+	pet_link_broken.clear()
+	pet_link_grace.clear()
+	enemy_cut_cooldown.clear()
 	last_energy_pet = ""
 	guardian_stationary_time = 0.0
 	fire_energy_heat = 0.0
@@ -1588,6 +1611,11 @@ func start_game_after_prologue() -> void:
 	weapon_visual.owner_player = player
 	weapon_visual.game = self
 	visual_root.add_child(weapon_visual)
+	var tether_view: PetTetherView = PetTetherViewScript.new()
+	tether_view.owner_player = player
+	tether_view.game = self
+	tether_view.z_index = 2
+	visual_root.add_child(tether_view)
 	refresh_skill_entities()
 	camera = Camera2D.new()
 	camera.position_smoothing_enabled = true
@@ -1920,7 +1948,7 @@ func refresh_skill_entities() -> void:
 func pet_hunt_target() -> Vector2:
 	if not is_instance_valid(player):
 		return Vector2.ZERO
-	var target := preferred_enemy_from(player.global_position, 560.0)
+	var target := preferred_enemy_from(player.global_position, MAX_ENGAGE_RANGE)
 	return target.global_position if is_instance_valid(target) else Vector2.ZERO
 
 func skill_entity_origin(id: String) -> Vector2:
@@ -1941,7 +1969,7 @@ func release_skill_entity(id: String, target_position := Vector2.ZERO, trigger_e
 		entity.release_toward(target_position)
 		if target_position != Vector2.ZERO:
 			var direction: Vector2 = (target_position - entity.global_position).normalized()
-			var distance: float = minf(170.0, entity.global_position.distance_to(target_position))
+			var distance: float = entity.global_position.distance_to(target_position)
 			spawn_skill_effect(entity.global_position, "cast", entity.entity_color(), distance, direction)
 	if trigger_echo and str(card_editions.get(id, "")) == "echo":
 		var captured_damage: Array[Dictionary] = []
@@ -2401,7 +2429,7 @@ func raw_damage_multiplier_from_effective(effective_multiplier: float) -> float:
 	return 8.0 + (effective_multiplier - 8.0) / 0.50
 
 func resolve_core_card_chain(base: float, source_id: String, target: Enemy = null) -> float:
-	var base_result := base * float(stats.damage)
+	var base_result := base * float(stats.damage) * PET_DAMAGE_SCALE
 	var additive := 0.0
 	var multiplier := 1.0
 	var crit_chance := clampf(float(stats.crit), 0.0, 0.85)
@@ -2712,7 +2740,7 @@ func spawn_wavelet() -> void:
 		amount = 2 + (1 if endless_wave >= 7 and randf() < 0.45 else 0)
 	elif randf() < clampf(float(chapter - 1) * 0.22, 0.0, 1.0):
 		amount = 2
-	if not endless_mode and chapter >= 6 and randf() < 0.20:
+	if not endless_mode and chapter >= 6 and randf() < 0.10:
 		amount += 1
 	var boss_present := not get_tree().get_nodes_in_group("bosses").is_empty()
 	var enemy_cap := (72 + mini(28, endless_wave * 2)) if endless_mode else mini(62, 44 + chapter * 5)
@@ -2755,7 +2783,10 @@ func chapter_enemy_kind(chapter: int, wave := 0) -> String:
 func spawn_enemy(kind: String, boss := false) -> Enemy:
 	var enemy: Enemy = EnemyScript.new()
 	var angle := randf() * TAU
-	var distance := randf_range(650.0, 860.0)
+	# 刷新距离必须跟着攻击范围一起收：360 之外的敌人既打不到也看不见，
+	# 过去 650~860 意味着每只怪要先走 3.7 秒不可见的路才进场，
+	# 战斗节奏被拉断，而它们仍在源源不断地积压。
+	var distance := randf_range(430.0, 560.0)
 	enemy.position = player.position + Vector2.from_angle(angle) * distance
 	entity_root.add_child(enemy)
 	enemy.add_to_group("enemies")
@@ -3114,17 +3145,52 @@ func spawn_boss_hazard(position: Vector2, damage: float, radius: float) -> void:
 	hazard.setup(player, damage, radius)
 	hazard_root.add_child(hazard)
 
+func pet_color(id: String) -> Color:
+	var entity = skill_entities.get(id)
+	return entity.entity_color() if is_instance_valid(entity) else Color("e8f5ff")
+
+func take_effect() -> SkillEffect:
+	while not effect_pool.is_empty():
+		var reused: SkillEffect = effect_pool.pop_back()
+		if is_instance_valid(reused):
+			reused.revive()
+			return reused
+	var fresh: SkillEffect = SkillEffectScript.new()
+	fresh.pool = self
+	visual_root.add_child(fresh)
+	return fresh
+
+func recycle_effect(effect: SkillEffect) -> void:
+	if is_instance_valid(effect) and effect_pool.size() < 96:
+		effect_pool.append(effect)
+
+func spawn_capsule_effect(at: Vector2, id: String, travel: float, width: float, direction: Vector2) -> void:
+	if not is_instance_valid(visual_root):
+		return
+	var effect := take_effect()
+	effect.position = at
+	effect.setup_capsule(pet_color(id), travel, width, direction)
+
+func spawn_arc_path_effect(id: String, path: PackedVector2Array) -> void:
+	if not is_instance_valid(visual_root) or path.size() < 2:
+		return
+	var effect := take_effect()
+	effect.position = Vector2.ZERO
+	effect.setup_polyline(pet_color(id), path)
+
 func spawn_skill_effect(position: Vector2, kind: String, color: Color, radius: float, direction := Vector2.RIGHT) -> void:
 	if not is_instance_valid(visual_root):
 		return
-	var effect: SkillEffect = SkillEffectScript.new()
+	var effect := take_effect()
 	effect.position = position
 	effect.setup(kind, color, radius, direction)
-	visual_root.add_child(effect)
 
 func process_weapons() -> void:
 	try_release_charged_pets()
-	if pulse_timer <= 0.0 and has_any_attack_target() and not active_core_skill_ids().is_empty():
+	# 链条只要连着就一直输能。过去要求「视野内有敌人」是为了不浪费飞行中的弹丸，
+	# 但索敌收进 360 之后，敌人从 650 走到 360 的两三秒里会完全停产，
+	# 而宠物本来就会把攒下的能量留到目标进范围再放，没有浪费一说。
+	if pulse_timer <= 0.0 and not active_core_skill_ids().is_empty():
 		fire_pulse()
 		pulse_timer = energy_shot_interval()
 
@@ -3146,13 +3212,16 @@ func pet_energy_requirement(id: String) -> float:
 		requirement *= 0.80
 	return maxf(0.75, requirement)
 
+func pet_link_connected(id: String) -> bool:
+	return not bool(pet_link_broken.get(id, false))
+
 func pet_energy_ratio(id: String) -> float:
 	return clampf(float(pet_energy.get(id, 0.0)) / pet_energy_requirement(id), 0.0, 1.0)
 
 func selectable_energy_pet_ids() -> Array[String]:
 	var result: Array[String] = []
 	for id in active_core_skill_ids():
-		if core_pet_control_state(id) == "normal" and pet_energy_ratio(id) < 0.999 and is_instance_valid(skill_entities.get(id)):
+		if core_pet_control_state(id) == "normal" and pet_link_connected(id) and pet_energy_ratio(id) < 0.999 and is_instance_valid(skill_entities.get(id)):
 			result.append(id)
 	return result
 
@@ -3169,7 +3238,7 @@ func energy_amount_for_pet(id: String) -> float:
 	return amount
 
 func on_pet_energy_received(id: String, amount: float) -> void:
-	if not active_core_skill_ids().has(id) or core_pet_control_state(id) != "normal":
+	if not active_core_skill_ids().has(id) or core_pet_control_state(id) != "normal" or not pet_link_connected(id):
 		return
 	for boss in get_tree().get_nodes_in_group("bosses"):
 		if is_instance_valid(boss) and boss.affixes.has("prism_shield") and boss.shield_time > 0.0:
@@ -3195,7 +3264,8 @@ func pet_consumes_resonance(id: String) -> bool:
 
 func try_release_charged_pet(id: String) -> bool:
 	var requirement := pet_energy_requirement(id)
-	if float(pet_energy.get(id, 0.0)) + 0.001 < requirement or core_pet_control_state(id) != "normal":
+	# 断链的宠物停摆：不再接收能量，也不释放技能，已存的能量保留。
+	if float(pet_energy.get(id, 0.0)) + 0.001 < requirement or core_pet_control_state(id) != "normal" or not pet_link_connected(id):
 		return false
 	last_hand_patterns = active_star_patterns()
 	last_hand_energy = active_hand_energy(last_hand_patterns)
@@ -3225,11 +3295,85 @@ func try_release_charged_pet(id: String) -> bool:
 		star_bridge_hands -= 1
 	return true
 
+func update_pet_tethers(delta: float) -> void:
+	if not is_instance_valid(player):
+		return
+	for key in enemy_cut_cooldown.keys():
+		var left := float(enemy_cut_cooldown[key]) - delta
+		if left <= 0.0:
+			enemy_cut_cooldown.erase(key)
+		else:
+			enemy_cut_cooldown[key] = left
+	var here := player.global_position
+	var enemies := get_tree().get_nodes_in_group("enemies")
+	for enemy in enemies:
+		if is_instance_valid(enemy) and bool(enemy.cuts_tethers):
+			enemy.tether_bait = Vector2.ZERO
+	for id in active_core_skill_ids():
+		var entity = skill_entities.get(id)
+		if not is_instance_valid(entity):
+			continue
+		if not pet_link_connected(id):
+			# 断开的宠物缓慢飘向玩家；玩家走到身边即可重新接上。
+			if here.distance_to(entity.global_position) <= TETHER_RECONNECT_RANGE:
+				reconnect_pet_tether(id)
+			continue
+		var grace := float(pet_link_grace.get(id, 0.0)) - delta
+		if grace > 0.0:
+			pet_link_grace[id] = grace
+			continue
+		pet_link_grace.erase(id)
+		for enemy in enemies:
+			if not is_instance_valid(enemy) or enemy.is_boss:
+				continue
+			var closest := Geometry2D.get_closest_point_to_segment(enemy.global_position, here, entity.global_position)
+			var reach: float = enemy.global_position.distance_to(closest)
+			# 精英怪把最近的链条当成进攻目标，普通怪只在恰好挡路时才剪断。
+			if bool(enemy.cuts_tethers) and reach < MAX_ENGAGE_RANGE and reach < enemy.global_position.distance_to(enemy.tether_bait if enemy.tether_bait != Vector2.ZERO else Vector2(1e9, 1e9)):
+				enemy.tether_bait = closest
+			if enemy_cut_cooldown.has(enemy.get_instance_id()):
+				continue
+			if reach <= enemy.radius + 6.0:
+				cut_pet_tether(id, enemy)
+				break
+
+func cut_pet_tether(id: String, enemy) -> void:
+	pet_link_broken[id] = true
+	pet_energy[id] = float(pet_energy.get(id, 0.0))
+	if is_instance_valid(enemy):
+		enemy_cut_cooldown[enemy.get_instance_id()] = TETHER_CUT_COOLDOWN
+	var entity = skill_entities.get(id)
+	if is_instance_valid(entity):
+		# 断链要有反冲：宠物本来就贴在玩家身后 54~64 像素，不弹开的话
+		# 下一帧就落进重连半径里，切断等于没发生。
+		var away: Vector2 = entity.global_position - player.global_position
+		if away.length() < 1.0:
+			away = Vector2.from_angle(randf() * TAU)
+		if is_instance_valid(enemy):
+			away = away.normalized().lerp((entity.global_position - enemy.global_position).normalized(), 0.5)
+		entity.global_position = player.global_position + away.normalized() * TETHER_SNAP_RECOIL
+		spawn_skill_effect(entity.global_position, "sever", entity.entity_color(), 46.0)
+	show_toast("供能链条被切断 · %s 停摆
+走过去重新接上它" % card_display_name(id), Color("ef7791"), 1.4)
+	play_tone(180.0, 0.12, 0.16)
+	shake_camera(4.0)
+	update_skill_list()
+
+func reconnect_pet_tether(id: String) -> void:
+	pet_link_broken.erase(id)
+	pet_link_grace[id] = TETHER_RECONNECT_GRACE
+	var entity = skill_entities.get(id)
+	if is_instance_valid(entity):
+		spawn_skill_effect(entity.global_position, "shield", entity.entity_color(), 52.0)
+	show_toast("%s 重新连上" % card_display_name(id), Color("4ade80"), 0.8)
+	play_tone(700.0, 0.09, 0.14)
+	update_skill_list()
+
 func has_any_attack_target() -> bool:
-	if nearest_enemy(820.0) != null:
+	if nearest_enemy(MAX_ENGAGE_RANGE) != null:
 		return true
 	for id in active_core_skill_ids():
-		if nearest_enemy_from(skill_entity_origin(id), 980.0) != null:
+		if nearest_enemy_from(skill_entity_origin(id), MAX_ENGAGE_RANGE) != null:
 			return true
 	return false
 
@@ -3319,22 +3463,22 @@ func cast_core_pet_from_hand(id: String, orbit_group_cast: bool) -> bool:
 			if not orbit_group_cast and has_orbit and has_enemy_in_range_from(skill_entity_origin(id), 210.0):
 				return fire_orbit_damage(id)
 		"chain":
-			if chain_level > 0 and nearest_enemy_from(skill_entity_origin(id), 740.0) != null:
+			if chain_level > 0 and nearest_enemy_from(skill_entity_origin(id), MAX_ENGAGE_RANGE) != null:
 				fire_chain_lightning(); return true
 		"nova":
 			if nova_level > 0 and has_enemy_in_effect_radius(skill_entity_origin(id), (115.0 + nova_level * 18.0) * skill_area_multiplier(id)):
 				fire_nova(); return true
 		"phase_step":
-			if phase_step_enabled and phase_step_cooldown <= 0.0 and nearest_enemy_from(skill_entity_origin(id), 420.0) != null:
+			if phase_step_enabled and phase_step_cooldown <= 0.0 and nearest_enemy_from(skill_entity_origin(id), 300.0) != null:
 				use_phase_step(); return true
 		"thunder_orb":
-			if thunder_level > 0 and nearest_enemy_from(skill_entity_origin(id), 900.0) != null:
+			if thunder_level > 0 and nearest_enemy_from(skill_entity_origin(id), MAX_ENGAGE_RANGE) != null:
 				fire_thunder_orb(); return true
 		"gravity_well":
-			if gravity_level > 0 and nearest_enemy_from(skill_entity_origin(id), 760.0) != null:
+			if gravity_level > 0 and nearest_enemy_from(skill_entity_origin(id), MAX_ENGAGE_RANGE) != null:
 				fire_gravity_well(); return true
 		"meteor_rain":
-			if meteor_level > 0 and nearest_enemy_from(skill_entity_origin(id), 950.0) != null:
+			if meteor_level > 0 and nearest_enemy_from(skill_entity_origin(id), MAX_ENGAGE_RANGE) != null:
 				fire_meteor_rain(); return true
 		"aegis":
 			# 必须有真实的重置间隔：挡下一击会立刻补能，否则护盾永远在，
@@ -3354,13 +3498,14 @@ func fire_execute() -> bool:
 	var target: Enemy = null
 	var lowest_ratio := INF
 	for node in get_tree().get_nodes_in_group("enemies"):
-		if is_instance_valid(node) and origin.distance_to(node.global_position) <= 620.0 + node.radius and not node.is_boss and node.health <= node.max_health * execute_ratio:
+		if is_instance_valid(node) and origin.distance_to(node.global_position) <= 340.0 + node.radius and not node.is_boss and node.health <= node.max_health * execute_ratio:
 			var health_ratio: float = node.health / maxf(1.0, node.max_health)
 			if health_ratio < lowest_ratio:
 				lowest_ratio = health_ratio
 				target = node
 	if is_instance_valid(target):
 		release_skill_entity("execute", target.global_position)
+		spawn_skill_effect(target.global_position, "sever", pet_color("execute"), 42.0)
 		deal_skill_damage(target, calculate_skill_damage(26.0, "execute", target), "execute", Vector2.ZERO, "execute")
 		if target.health <= 0.0:
 			record_core_mastery("execute")
@@ -3418,17 +3563,19 @@ func effective_magnet_range() -> float:
 	var result := float(stats.magnet)
 	return result
 
-func nearest_enemy(range_limit := 820.0) -> Enemy:
+func nearest_enemy(range_limit := MAX_ENGAGE_RANGE) -> Enemy:
 	return nearest_enemy_from(player.global_position, range_limit)
 
-func preferred_enemy_from(origin: Vector2, range_limit := 820.0) -> Enemy:
+func preferred_enemy_from(origin: Vector2, range_limit := MAX_ENGAGE_RANGE) -> Enemy:
+	range_limit = minf(range_limit, MAX_ENGAGE_RANGE)
 	# Boss 在场时优先咬 Boss：否则 AoE 构筑的伤害会被杂兵全部吸走。
 	for boss in get_tree().get_nodes_in_group("bosses"):
 		if is_instance_valid(boss) and origin.distance_to(boss.global_position) <= range_limit + boss.radius:
 			return boss
 	return nearest_enemy_from(origin, range_limit)
 
-func nearest_enemy_from(origin: Vector2, range_limit := 820.0) -> Enemy:
+func nearest_enemy_from(origin: Vector2, range_limit := MAX_ENGAGE_RANGE) -> Enemy:
+	range_limit = minf(range_limit, MAX_ENGAGE_RANGE)
 	var closest: Enemy
 	var best := INF
 	for node in get_tree().get_nodes_in_group("enemies"):
@@ -3441,39 +3588,31 @@ func nearest_enemy_from(origin: Vector2, range_limit := 820.0) -> Enemy:
 	return closest
 
 func fire_pulse() -> void:
-	# 每只未充满的宠物各得一枚供能弹。过去整轮只发 1 枚、在宠物之间轮流投喂，
-	# 于是总能量吞吐与宠物数量完全无关——多买一只宠物不但不提升输出，还会稀释
-	# 共鸣池和条件养成进度，让「组队」这个核心成长方向变成负收益。
+	# 供能不再是发射弹丸，而是沿链条连续注入。这里按一个「脉冲」的额度结算，
+	# 总吞吐与原来一致（每次额度 = 原来一枚弹的能量），只是不再有飞行物。
 	var targets := selectable_energy_pet_ids()
 	if targets.is_empty():
-		if lone_star_protocol_active():
+		if lone_star_protocol_active() and has_any_attack_target():
 			fire_lone_star_spark()
 		return
 	var surged := surge_pulses > 0
 	if surged:
 		surge_pulses -= 1
-	var launched := 0
-	var travel_speed := 930.0 if player.character_name == "游侠" else 760.0
-	for index in targets.size():
-		var id := targets[index]
-		var entity = skill_entities.get(id)
-		if not is_instance_valid(entity):
+	var fed := 0
+	for id in targets:
+		if not is_instance_valid(skill_entities.get(id)):
 			continue
-		var bolt: EnergyBolt = EnergyBoltScript.new()
-		projectile_root.add_child(bolt)
-		var origin_offset := Vector2(0.0, (float(index) - float(targets.size() - 1) * 0.5) * 11.0).rotated(player.rotation)
-		bolt.global_position = player.global_position + origin_offset
-		bolt.setup(entity, id, self, energy_amount_for_pet(id) * (1.5 if surged else 1.0), travel_speed)
-		launched += 1
-	if player.character_name == "星火使" and launched > 0:
+		on_pet_energy_received(id, energy_amount_for_pet(id) * (1.5 if surged else 1.0))
+		fed += 1
+	if player.character_name == "星火使" and fed > 0:
 		fire_energy_heat = minf(0.50, fire_energy_heat + 0.055)
-	if launched > 0:
+	if fed > 0:
 		play_tone(420.0 + randf_range(-16, 16), 0.025, 0.045)
-	if lone_star_protocol_active():
+	if lone_star_protocol_active() and has_any_attack_target():
 		fire_lone_star_spark()
 
 func fire_lone_star_spark() -> bool:
-	var target := nearest_enemy_from(player.global_position, 920.0)
+	var target := nearest_enemy_from(player.global_position, MAX_ENGAGE_RANGE)
 	if not is_instance_valid(target):
 		return false
 	# 独立的低强度保底：不读取卡牌链、暴击、版本、共鸣、封印与养成。
@@ -3486,6 +3625,8 @@ func fire_lone_star_spark() -> bool:
 func deal_skill_damage(target: Enemy, amount: float, source_id: String, knockback := Vector2.ZERO, damage_type := "") -> void:
 	if not is_instance_valid(target):
 		return
+	# 记录本次伤害的来源宠物，让飘字与击杀特效能标出「是谁打的」
+	last_damage_color = pet_color(source_id) if source_id in CORE_SKILL_CARD_IDS else Color("e8f5ff")
 	# 在所有反应倍率完成后再快照，回响才能复现最终实际伤害。
 	if echo_damage_captures.has(source_id):
 		var captured: Array = echo_damage_captures[source_id]
@@ -3497,6 +3638,7 @@ func fire_aura() -> void:
 	var target := nearest_enemy_from(origin, aura_radius * skill_area_multiplier("aura") + 45.0)
 	release_skill_entity("aura", target.global_position if is_instance_valid(target) else origin)
 	var radius := aura_radius * skill_area_multiplier("aura")
+	spawn_skill_effect(origin, "field", pet_color("aura"), radius)
 	var hit_count := 0
 	for node in get_tree().get_nodes_in_group("enemies"):
 		if is_instance_valid(node) and origin.distance_to(node.global_position) <= radius + node.radius:
@@ -3534,6 +3676,7 @@ func fire_orbit_damage(source_id := "") -> bool:
 			hit_targets.append(node)
 	if hit_targets.is_empty():
 		return false
+	spawn_skill_effect(origin, "blades", pet_color(orbit_source), orbit_radius + ring_band)
 	var orbit_target_position: Vector2 = hit_targets[0].global_position
 	for orbit_entity_id in ["orbit", "satellite_engine", "blade_dance"]:
 		if skill_entities.has(orbit_entity_id):
@@ -3557,11 +3700,12 @@ func fire_orbit_damage(source_id := "") -> bool:
 	return true
 
 func fire_chain_lightning() -> void:
-	var current := preferred_enemy_from(skill_entity_origin("chain"), 740.0)
+	var current := preferred_enemy_from(skill_entity_origin("chain"), MAX_ENGAGE_RANGE)
 	if current == null:
 		return
 	release_skill_entity("chain", current.global_position)
 	var visited: Dictionary = {}
+	var arc_path := PackedVector2Array([skill_entity_origin("chain")])
 	var jumps := 2 + chain_level + int(floor(core_mastery_rank("chain") / 2.0))
 	if active_relics.has("storm_relay"):
 		jumps += 2 * relic_rank("storm_relay")
@@ -3569,6 +3713,7 @@ func fire_chain_lightning() -> void:
 		if current == null:
 			break
 		visited[current.get_instance_id()] = true
+		arc_path.append(current.global_position)
 		deal_skill_damage(current, calculate_skill_damage(12.0 + chain_level * 3.0, "chain", current), "chain", Vector2.ZERO, "chain")
 		if evolutions.has("molten_circuit"):
 			current.apply_shock()
@@ -3583,6 +3728,7 @@ func fire_chain_lightning() -> void:
 					best = distance
 					next = node
 		current = next
+	spawn_arc_path_effect("chain", arc_path)
 	if visited.size() >= 3:
 		record_core_mastery("chain")
 	play_tone(690.0, 0.05, 0.11)
@@ -3606,11 +3752,11 @@ func fire_nova() -> void:
 	if hit_count >= 4:
 		record_core_mastery("nova")
 	show_toast("星核爆破", Color("facc15"), 0.35)
-	spawn_skill_effect(origin, "nova", Color("facc15"), radius)
+	spawn_skill_effect(origin, "field", pet_color("nova"), radius)
 	play_tone(240.0, 0.12, 0.18)
 
 func fire_thunder_orb() -> void:
-	var target := preferred_enemy_from(skill_entity_origin("thunder_orb"), 900.0)
+	var target := preferred_enemy_from(skill_entity_origin("thunder_orb"), MAX_ENGAGE_RANGE)
 	if target == null:
 		return
 	release_skill_entity("thunder_orb", target.global_position)
@@ -3631,11 +3777,11 @@ func fire_thunder_orb() -> void:
 	if mastery_target or hit_count >= 3:
 		record_core_mastery("thunder_orb")
 	show_toast("雷暴法球", Color("70d7ff"), 0.28)
-	spawn_skill_effect(target.global_position, "thunder", Color("70d7ff"), radius)
+	spawn_skill_effect(target.global_position, "thunder", pet_color("thunder_orb"), radius)
 	play_tone(760.0, 0.06, 0.1)
 
 func fire_gravity_well() -> void:
-	var target := preferred_enemy_from(skill_entity_origin("gravity_well"), 760.0)
+	var target := preferred_enemy_from(skill_entity_origin("gravity_well"), MAX_ENGAGE_RANGE)
 	if target == null:
 		return
 	release_skill_entity("gravity_well", target.global_position)
@@ -3652,10 +3798,10 @@ func fire_gravity_well() -> void:
 	if pulled_count >= 5:
 		record_core_mastery("gravity_well")
 	show_toast("引力奇点", Color("c084fc"), 0.3)
-	spawn_skill_effect(target.global_position, "gravity", Color("c084fc"), gravity_radius)
+	spawn_skill_effect(target.global_position, "gravity", pet_color("gravity_well"), gravity_radius)
 
 func fire_meteor_rain() -> void:
-	var target := preferred_enemy_from(skill_entity_origin("meteor_rain"), 950.0)
+	var target := preferred_enemy_from(skill_entity_origin("meteor_rain"), MAX_ENGAGE_RANGE)
 	if target == null:
 		return
 	release_skill_entity("meteor_rain", target.global_position)
@@ -3672,7 +3818,7 @@ func fire_meteor_rain() -> void:
 	if hit_count >= 4:
 		record_core_mastery("meteor_rain")
 	show_toast("陨星坠落", Color("ffbd69"), 0.35)
-	spawn_skill_effect(target.global_position, "meteor", Color("fb923c"), meteor_radius + 13.0)
+	spawn_skill_effect(target.global_position, "meteor", pet_color("meteor_rain"), meteor_radius)
 
 func use_phase_step() -> void:
 	if not phase_step_enabled or phase_step_cooldown > 0.0 or not is_card_active("phase_step") or not is_instance_valid(player):
@@ -3680,7 +3826,7 @@ func use_phase_step() -> void:
 	phase_step_cooldown = PHASE_STEP_COOLDOWN
 	var direction := Input.get_vector("move_left", "move_right", "move_up", "move_down")
 	if direction.length_squared() < 0.1:
-		var target := nearest_enemy_from(skill_entity_origin("phase_step"), 420.0)
+		var target := nearest_enemy_from(skill_entity_origin("phase_step"), 300.0)
 		direction = (target.global_position - player.global_position).normalized() if is_instance_valid(target) else Vector2.RIGHT.rotated(player.rotation)
 	direction = direction.normalized()
 	var old_position := player.global_position
@@ -3688,7 +3834,7 @@ func use_phase_step() -> void:
 	release_skill_entity("phase_step", destination)
 	player.global_position = destination
 	award_achievement("phase_traveler")
-	spawn_skill_effect(old_position, "dash", Color("70f0ff"), 250.0, direction)
+	spawn_capsule_effect(old_position, "phase_step", 250.0, 76.0, direction)
 	player.invulnerable = maxf(player.invulnerable, PHASE_STEP_INVULNERABILITY)
 	var hit_count := 0
 	for node in get_tree().get_nodes_in_group("enemies"):
@@ -4121,7 +4267,7 @@ func on_enemy_damaged(at: Vector2, amount: float, lethal: bool) -> void:
 	resonance = clampf(resonance + generated, 0.0, MAX_RESONANCE)
 	var effect := HitEffectScript.new()
 	effect.position = at
-	effect.setup(amount, lethal)
+	effect.setup(amount, lethal, last_damage_color)
 	visual_root.add_child(effect)
 
 func spawn_pickup(kind: String, value: int, pos: Vector2) -> void:

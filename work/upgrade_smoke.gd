@@ -9,6 +9,13 @@ func run_test() -> void:
 	root.add_child(game)
 	await process_frame
 	game.start_game_after_prologue()
+	# 开局已自带两只宠物，5 格卡组买到第 3 张就满了，后面的会转进替换流程。
+	# 本用例只验证「买到的卡是否真的生效」，先腾出空间。
+	game.card_slots = 7
+	game.equipped_cards.clear()
+	# 开局宠物同时写进了 upgrade_levels，不清掉的话再买同一张会被「已达上限」挡下
+	game.upgrade_levels.clear()
+	game.refresh_derived_card_effects()
 	game.show_shop(true)
 	for upgrade in ["chain", "nova", "homing", "burn", "satellite_engine"]:
 		game.shop_goods = [{"kind":"card", "id":upgrade, "price":0, "sold":false, "locked":false}]
