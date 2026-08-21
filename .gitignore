@@ -21,3 +21,4 @@ desktop.ini
 # 平衡模拟输出
 work/sim_out.txt
 work/smoke_out.txt
+work/perf_out.txt
