@@ -8,13 +8,17 @@ extends RefCounted
 #   median —— 稳定推到第 4~5 章，偶尔通关
 #   strong —— 常规通关，末章仍有余血
 #
-# 这里的数字是「形状」而非实测值：第 1 步只保证结构与确定性，等真实流水积累
-# 起来之后，应当用实测分布替换 PROFILES 里的常量。
+# 这里的数字是「形状」而非实测值：等真实流水积累起来之后，应当用实测分布替换
+# PROFILES 里的常量。
+#
+# scale 是这一档「已经收敛到」的压力系数。慢层对单局变化有限幅，如果夹具里
+# 一律写 1.0，每次跑分都等于「第一局」，会被限幅卡在带宽中间，测不出这一档
+# 真正稳定下来之后的样子。
 
 const PROFILES := {
-	"weak":   {"runs": 8, "seconds": 96.0,  "jitter": 11.0, "boss": 1, "hp": 12.0, "dmg": 620.0, "severed": 26.0, "ttk": 15.0, "deck": 3, "pets": 2},
-	"median": {"runs": 8, "seconds": 236.0, "jitter": 18.0, "boss": 3, "hp": 44.0, "dmg": 880.0, "severed": 12.0, "ttk": 9.0,  "deck": 5, "pets": 3},
-	"strong": {"runs": 8, "seconds": 372.0, "jitter": 9.0,  "boss": 6, "hp": 72.0, "dmg": 470.0, "severed": 3.0,  "ttk": 5.0,  "deck": 7, "pets": 4}
+	"weak":   {"runs": 8, "seconds": 96.0,  "jitter": 11.0, "boss": 1, "hp": 12.0, "dmg": 620.0, "severed": 26.0, "ttk": 15.0, "deck": 3, "pets": 2, "scale": 0.85},
+	"median": {"runs": 8, "seconds": 236.0, "jitter": 18.0, "boss": 3, "hp": 44.0, "dmg": 880.0, "severed": 12.0, "ttk": 9.0,  "deck": 5, "pets": 3, "scale": 1.00},
+	"strong": {"runs": 8, "seconds": 372.0, "jitter": 9.0,  "boss": 6, "hp": 72.0, "dmg": 470.0, "severed": 3.0,  "ttk": 5.0,  "deck": 7, "pets": 4, "scale": 1.15}
 }
 
 static func names() -> Array:
@@ -67,6 +71,7 @@ static func _make_run(character: String, shape: Dictionary, index: int) -> Dicti
 		"spent": int(78.0 * float(slices)),
 		"deck": int(shape.deck),
 		"pets": int(shape.pets),
+		"scale": float(shape.get("scale", 1.0)),
 		"ttk": ttk,
 		"rows": rows
 	}

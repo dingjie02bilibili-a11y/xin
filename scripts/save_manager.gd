@@ -6,7 +6,7 @@ const CHARACTERS := ["游侠", "骑士", "星术师", "守卫", "影舞者", "�
 # 存在的唯一目的是给「难度心流」留一份证据：这位玩家实际打成什么样。
 # 只留最近 HISTORY_LIMIT 局，存档体积因此有上界。
 const HISTORY_LIMIT := 40
-const HISTORY_VERSION := 1
+const HISTORY_VERSION := 2
 const DEFAULT_DATA := {
 	"selected_character": "游侠",
 	"settings": {"sound": true, "screenshake": true},
@@ -127,6 +127,9 @@ func normalise_run(summary: Dictionary) -> Dictionary:
 		"spent": int(_num(summary.get("spent", 0))),
 		"deck": int(_num(summary.get("deck", 0))),
 		"pets": int(_num(summary.get("pets", 0))),
+		# 本局实际生效的压力系数。必须记下来，否则「这局到底难在哪」
+		# 无法回溯，下一局也没法做单局变化幅度的限制。
+		"scale": _round2(summary.get("scale", 1.0)),
 		"ttk": [],
 		"rows": []
 	}
@@ -177,6 +180,9 @@ func _trim_history() -> void:
 
 func _num(value) -> float:
 	return float(value) if (value is float or value is int or value is bool) else 0.0
+
+func _round2(value) -> float:
+	return snappedf(_num(value), 0.01)
 
 func _round1(value) -> float:
 	return snappedf(_num(value), 0.1)

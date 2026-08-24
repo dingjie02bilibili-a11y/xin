@@ -12,6 +12,7 @@ const SkillEffectScript = preload("res://scripts/skill_effect.gd")
 const SkillEntityScript = preload("res://scripts/skill_entity.gd")
 const PetTetherViewScript = preload("res://scripts/pet_tether_view.gd")
 const StoryArchiveData = preload("res://scripts/story_archive.gd")
+const DifficultyDirector = preload("res://scripts/difficulty_director.gd")
 
 enum GameState { MENU, PLAYING, LEVEL_UP, PAUSED, GAME_OVER }
 
@@ -385,6 +386,8 @@ var run_chapter_rows: Array[Dictionary] = []
 var run_bucket: Dictionary = {}
 var run_sample_timer := 0.0
 var run_boss_ttk: Array[float] = []
+# 本局的压力系数，开局定死、局内不变。只作用于刷怪节奏与场上上限。
+var run_pressure_scale := 1.0
 var pending_boss_rewards: Array[Dictionary] = []
 var mainline_completion_pending := false
 var mainline_complete_overlay: Control
@@ -563,7 +566,9 @@ func _process(delta: float) -> void:
 	hud_timer -= delta
 	if spawn_timer <= 0.0:
 		spawn_wavelet()
-		spawn_timer = maxf(0.58, 1.12 - elapsed / 680.0)
+		# 压力系数只作用在节奏和密度上：玩家把它读作「这一局紧一点/松一点」，
+		# 而不是「我的数值被改了」。
+		spawn_timer = maxf(0.58, 1.12 - elapsed / 680.0) / run_pressure_scale
 	process_pickups(delta)
 	check_boss_timing()
 	if not endless_mode and elapsed >= next_shop_time:
@@ -1459,6 +1464,9 @@ func start_game_after_prologue() -> void:
 	run_bucket.clear()
 	run_sample_timer = 0.0
 	run_boss_ttk.clear()
+	# 慢层：按本角色最近几局的主线战绩定下本局压力。证据不足时返回 1.0。
+	var history := SaveManager.recent_runs(str(SaveManager.data.selected_character), "mainline", DifficultyDirector.WINDOW)
+	run_pressure_scale = DifficultyDirector.pressure_scale(history, DifficultyDirector.last_applied_scale(history))
 	pending_boss_rewards.clear()
 	mainline_completion_pending = false
 	run_achievement_start_count = SaveManager.data.achievements.size()
@@ -1802,6 +1810,10 @@ func update_hud() -> void:
 	else:
 		var chapter := current_mainline_chapter()
 		mode_label.text = "主线远征 · 第%d章/6 · %s" % [chapter, chapter_theme_name(chapter)]
+		# 心流调节必须是明示的。玩家可以不同意这个判断，但不该被瞒着——
+		# 「暗中根据你的表现调难度」一旦被发现，比难度本身更伤动机。
+		if not is_equal_approx(run_pressure_scale, 1.0):
+			mode_label.text += " · 压力%+d%%" % int(round((run_pressure_scale - 1.0) * 100.0))
 		mode_label.add_theme_color_override("font_color", Color("c7d7eb"))
 	if lone_star_protocol_active():
 		mode_label.text += " · 孤星协议"
@@ -2763,6 +2775,8 @@ func spawn_wavelet() -> void:
 		amount += 1
 	var boss_present := not get_tree().get_nodes_in_group("bosses").is_empty()
 	var enemy_cap := (72 + mini(28, endless_wave * 2)) if endless_mode else mini(62, 44 + chapter * 5)
+	if not endless_mode:
+		enemy_cap = int(round(float(enemy_cap) * run_pressure_scale))
 	if boss_present:
 		# 主线里 Boss 是关卡高潮，收紧场面让玩家专心打；无尽里 Boss 每 3 波就来一次，
 		# 用同样的力度会让后半段长期停摆，所以只做温和压制。
@@ -2841,6 +2855,7 @@ func build_run_summary(victory: bool) -> Dictionary:
 		"spent": spent_star_shards,
 		"deck": equipped_cards.size(),
 		"pets": equipped_pet_count(),
+		"scale": run_pressure_scale,
 		"ttk": run_boss_ttk,
 		"rows": run_chapter_rows
 	}
@@ -4352,6 +4367,8 @@ func check_achievement_progress() -> void:
 func start_endless_mode() -> void:
 	mainline_completion_pending = false
 	endless_mode = true
+	# 无尽是计分模式：波数必须在不同存档之间可比，所以心流调节到此为止。
+	run_pressure_scale = 1.0
 	endless_elapsed = 0.0
 	endless_wave = 1
 	next_endless_boss_wave = 3
@@ -5739,7 +5756,10 @@ func end_run(victory: bool) -> void:
 	box.add_child(subtitle)
 	var mode_summary := "无尽第 %d 波" % endless_wave if endless_mode else "主线 %d/6 关" % mini(boss_kills, 6)
 	var new_achievements := maxi(0, SaveManager.data.achievements.size() - run_achievement_start_count)
+	var pressure_line := DifficultyDirector.describe(run_pressure_scale)
 	var summary := "生存时间  %s  ·  击败 %d  ·  Boss %d  ·  %s\n累计星屑 %d  ·  消费 %d  ·  剩余 %d\n本局解锁成就 %d  ·  新故事 %d  ·  永久保留内容只有成就与故事" % [format_time(elapsed), kills, boss_kills, mode_summary, total_star_shards, spent_star_shards, star_shards, new_achievements, run_new_story_ids.size()]
+	if pressure_line != "":
+		summary += String.chr(10) + pressure_line + " · 只影响刷怪节奏与场上数量，不改敌人伤害与掉落"
 	var summary_label := make_label(summary, 18, Color("d8e5f3"))
 	summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	summary_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
