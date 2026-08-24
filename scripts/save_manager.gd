@@ -6,7 +6,7 @@ const CHARACTERS := ["游侠", "骑士", "星术师", "守卫", "影舞者", "�
 # 存在的唯一目的是给「难度心流」留一份证据：这位玩家实际打成什么样。
 # 只留最近 HISTORY_LIMIT 局，存档体积因此有上界。
 const HISTORY_LIMIT := 40
-const HISTORY_VERSION := 2
+const HISTORY_VERSION := 3
 const DEFAULT_DATA := {
 	"selected_character": "游侠",
 	"settings": {"sound": true, "screenshake": true},
@@ -130,6 +130,9 @@ func normalise_run(summary: Dictionary) -> Dictionary:
 		# 本局实际生效的压力系数。必须记下来，否则「这局到底难在哪」
 		# 无法回溯，下一局也没法做单局变化幅度的限制。
 		"scale": _round2(summary.get("scale", 1.0)),
+		# 快层这一局的时间加权均值。慢层看 scale，快层看 flow：
+		# 两者分开记，才能回答「是这一局定得不对，还是局内一直在救火」。
+		"flow": _round2(summary.get("flow", 1.0)),
 		"ttk": [],
 		"rows": []
 	}

@@ -25,6 +25,18 @@ const ENDLESS_WAVE_DURATION := 45.0
 const RUN_SAMPLE_INTERVAL := 0.25
 # 无尽可以打到几十波，切片数必须封顶，否则存档会被一局无尽撑爆。
 const RUN_SLICE_LIMIT := 12
+# 快层（局内心流）。慢层在开局定下这一局的基准压力，快层只在基准附近做
+# 短时微调，band 刻意比慢层窄：它要的是「这一分钟松一点/紧一点」，
+# 不是改变这一局的难度定位。
+const FLOW_BAND := 0.08
+const FLOW_INTERVAL := 0.5
+# 同样是降压快、加压慢。数值按「几秒钟走完整条带」来定：
+# 松手 4 秒到底，收紧要 16 秒——玩家能感到喘息，但感觉不到被追着加码。
+const FLOW_EASE_RATE := 0.02
+const FLOW_TIGHTEN_RATE := 0.005
+# 开局这段本来就人少、也还没挨过打，会被误读成「在摸鱼」而立刻加压，
+# 正好把「开局可控」这条给毁了。所以前 45 秒快层完全不介入。
+const FLOW_WARMUP := 45.0
 const FIRST_SHOP_TIME := 38.0
 const SHOP_INTERVAL := 60.0
 const SHOP_ITEM_COUNT := 3
@@ -388,6 +400,11 @@ var run_sample_timer := 0.0
 var run_boss_ttk: Array[float] = []
 # 本局的压力系数，开局定死、局内不变。只作用于刷怪节奏与场上上限。
 var run_pressure_scale := 1.0
+# 快层的即时系数，围绕 1.0 浮动，与 run_pressure_scale 相乘后生效。
+var flow_pressure := 1.0
+var flow_timer := FLOW_INTERVAL
+var flow_sum := 0.0
+var flow_time := 0.0
 var pending_boss_rewards: Array[Dictionary] = []
 var mainline_completion_pending := false
 var mainline_complete_overlay: Control
@@ -533,6 +550,7 @@ func _process(delta: float) -> void:
 	queue_redraw()
 	elapsed += delta
 	sample_run_metrics(delta)
+	update_flow_pressure(delta)
 	update_boss_card_disruptions(delta)
 	update_pet_tethers(delta)
 	update_conditional_card_effects(delta)
@@ -566,9 +584,7 @@ func _process(delta: float) -> void:
 	hud_timer -= delta
 	if spawn_timer <= 0.0:
 		spawn_wavelet()
-		# 压力系数只作用在节奏和密度上：玩家把它读作「这一局紧一点/松一点」，
-		# 而不是「我的数值被改了」。
-		spawn_timer = maxf(0.58, 1.12 - elapsed / 680.0) / run_pressure_scale
+		spawn_timer = maxf(0.58, 1.12 - elapsed / 680.0)
 	process_pickups(delta)
 	check_boss_timing()
 	if not endless_mode and elapsed >= next_shop_time:
@@ -1467,6 +1483,10 @@ func start_game_after_prologue() -> void:
 	# 慢层：按本角色最近几局的主线战绩定下本局压力。证据不足时返回 1.0。
 	var history := SaveManager.recent_runs(str(SaveManager.data.selected_character), "mainline", DifficultyDirector.WINDOW)
 	run_pressure_scale = DifficultyDirector.pressure_scale(history, DifficultyDirector.last_applied_scale(history))
+	flow_pressure = 1.0
+	flow_timer = FLOW_INTERVAL
+	flow_sum = 0.0
+	flow_time = 0.0
 	pending_boss_rewards.clear()
 	mainline_completion_pending = false
 	run_achievement_start_count = SaveManager.data.achievements.size()
@@ -2775,8 +2795,6 @@ func spawn_wavelet() -> void:
 		amount += 1
 	var boss_present := not get_tree().get_nodes_in_group("bosses").is_empty()
 	var enemy_cap := (72 + mini(28, endless_wave * 2)) if endless_mode else mini(62, 44 + chapter * 5)
-	if not endless_mode:
-		enemy_cap = int(round(float(enemy_cap) * run_pressure_scale))
 	if boss_present:
 		# 主线里 Boss 是关卡高潮，收紧场面让玩家专心打；无尽里 Boss 每 3 波就来一次，
 		# 用同样的力度会让后半段长期停摆，所以只做温和压制。
@@ -2787,6 +2805,43 @@ func spawn_wavelet() -> void:
 		return
 	for i in amount:
 		spawn_enemy(chapter_enemy_kind(chapter, endless_wave if endless_mode else 0))
+
+# ---------------------------------------------------------------- 局内心流（快层）
+# 与慢层严格分工：慢层回答「这个玩家该打什么难度」，快层只回答「这一分钟
+# 是不是卡住了/是不是在摸鱼」。两者相乘后统一作用在普通敌人的血量上，
+# 落点选择的来龙去脉见 spawn_enemy 里的长注释。
+
+func effective_pressure() -> float:
+	return run_pressure_scale * flow_pressure
+
+func update_flow_pressure(delta: float) -> void:
+	if endless_mode or not is_instance_valid(player):
+		return
+	# 时间加权平均，用来回看「快层这一局到底介入了多少」。
+	flow_sum += flow_pressure * delta
+	flow_time += delta
+	flow_timer -= delta
+	if flow_timer > 0.0:
+		return
+	var step := FLOW_INTERVAL - flow_timer
+	flow_timer = FLOW_INTERVAL
+	if elapsed < FLOW_WARMUP:
+		return
+	# Boss 是设计好的高潮，密度另有一套收紧规则。这时再动快层，
+	# 「掉血就变简单」会变成可利用的漏洞，高潮也被冲淡。保持当前值。
+	if not get_tree().get_nodes_in_group("bosses").is_empty():
+		return
+	# 只用两个最易读的信号：还剩多少血、最近有没有真的被威胁到。
+	# 信号越少越难被单一构筑钻空子，也越容易解释「刚才为什么变松了」。
+	var hp_ratio := player.health / maxf(1.0, player.max_health)
+	var since_hurt := elapsed - last_hurt_elapsed
+	var comfort := clampf((hp_ratio - 0.55) / 0.35, -1.0, 1.0) * 0.6 + clampf((since_hurt - 8.0) / 16.0, -1.0, 1.0) * 0.4
+	var target := clampf(1.0 + comfort * FLOW_BAND, 1.0 - FLOW_BAND, 1.0 + FLOW_BAND)
+	var rate := FLOW_TIGHTEN_RATE if target > flow_pressure else FLOW_EASE_RATE
+	flow_pressure = move_toward(flow_pressure, target, rate * step)
+
+func flow_pressure_average() -> float:
+	return flow_sum / flow_time if flow_time > 0.0 else 1.0
 
 # ---------------------------------------------------------------- 战绩流水采集
 # 这一段只做记录，不参与任何战斗结算：给「难度心流」留下一份可回溯的证据。
@@ -2856,6 +2911,7 @@ func build_run_summary(victory: bool) -> Dictionary:
 		"deck": equipped_cards.size(),
 		"pets": equipped_pet_count(),
 		"scale": run_pressure_scale,
+		"flow": flow_pressure_average(),
 		"ttk": run_boss_ttk,
 		"rows": run_chapter_rows
 	}
@@ -2904,6 +2960,28 @@ func spawn_enemy(kind: String, boss := false) -> Enemy:
 		var late_wave := maxf(0.0, endless_wave - 13.0)
 		difficulty *= 1.0 + minf(12.0, endless_wave - 1.0) * 0.055 + sqrt(late_wave) * 0.025 + late_wave * 0.012
 	enemy.setup(kind, difficulty, player)
+	# 压力系数的落点。这里试错过两轮，别再改回去：
+	#
+	#   按「数量」（刷怪节奏 + 场上上限）调 —— 实测减压 15% 让星屑收入掉 18%、
+	#   Boss 少清 0.6 个。敌人在这个游戏里不只是压力，它同时是玩家的资源供给
+	#   （星屑、共鸣、宠物能量、波次目标全靠击杀），减压等于把玩家变穷，
+	#   净效果反而害了他。只补星屑堵不住其余通道。
+	#
+	#   按「出生距离 + 接近速度」调 —— 方向对了，但减速会制造真空：实测断链
+	#   时长冲到 21%、收入掉 30%。敌人慢吞吞挤在远处，宠物够不着，
+	#   玩家既没有收入也没有节奏，「简单」变成了「无聊」。
+	#
+	# 血量是唯一既能降压、又不制造真空的量：威胁在场上停留多久。刷怪速率、
+	# 出生距离、掉落、伤害全部不变，接触照旧发生，只是解决得快一点或慢一点。
+	# 总击杀数由刷怪速率封顶，所以收入不会因此系统性偏移。
+	#
+	# 但**不要把系数接到 enemy.damage 上**：伤害是致死变量，
+	# 动它会把一次可挽救的失误直接变成暴毙，玩家也会读成「我被针对了」。
+	if not boss:
+		var pressure := effective_pressure()
+		if pressure > 0.0:
+			enemy.health *= pressure
+			enemy.max_health *= pressure
 	if not danger_contract.is_empty() and not boss:
 		enemy.health *= 1.25
 		enemy.max_health *= 1.25
@@ -5759,7 +5837,12 @@ func end_run(victory: bool) -> void:
 	var pressure_line := DifficultyDirector.describe(run_pressure_scale)
 	var summary := "生存时间  %s  ·  击败 %d  ·  Boss %d  ·  %s\n累计星屑 %d  ·  消费 %d  ·  剩余 %d\n本局解锁成就 %d  ·  新故事 %d  ·  永久保留内容只有成就与故事" % [format_time(elapsed), kills, boss_kills, mode_summary, total_star_shards, spent_star_shards, star_shards, new_achievements, run_new_story_ids.size()]
 	if pressure_line != "":
-		summary += String.chr(10) + pressure_line + " · 只影响刷怪节奏与场上数量，不改敌人伤害与掉落"
+		summary += String.chr(10) + pressure_line + " · 只改变普通敌人的血量，不改伤害与掉落"
+	# 快层是连续变化的，挂在 HUD 上只会一直跳数字；放在结算里报均值，
+	# 玩家既知道它存在、也能看出这一局它到底介入了多少。
+	var flow_average := flow_pressure_average()
+	if not endless_mode and absf(flow_average - 1.0) >= 0.005:
+		summary += String.chr(10) + "局内即时微调 均值%+d%%（上限 ±%d%%，Boss 战与开局 %d 秒内不介入）" % [int(round((flow_average - 1.0) * 100.0)), int(FLOW_BAND * 100.0), int(FLOW_WARMUP)]
 	var summary_label := make_label(summary, 18, Color("d8e5f3"))
 	summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	summary_label.size_flags_vertical = Control.SIZE_EXPAND_FILL

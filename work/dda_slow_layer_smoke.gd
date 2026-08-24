@@ -165,8 +165,10 @@ func check_wiring() -> void:
 	game.elapsed = 30.0
 	var pressured_enemy = game.spawn_enemy("追猎者")
 	await process_frame
+	# 伤害是致死变量，永远不许接系数；血量是唯一既能降压又不制造真空的落点，
+	# 所以这里要求它**必须**跟着动（落点选择的来龙去脉见 dda_fast_layer_smoke）。
 	flag(is_equal_approx(pressured_enemy.damage, damage_before), "压力系数改到了敌人伤害上")
-	flag(is_equal_approx(pressured_enemy.max_health, health_before), "压力系数改到了敌人血量上")
+	flag(pressured_enemy.max_health > health_before, "加压没有提高敌人血量：%.2f vs %.2f" % [health_before, pressured_enemy.max_health])
 	game.run_pressure_scale = scaled
 
 	# 别的角色不该共享这份战绩。注意换角色前必须先解锁：没解锁的话
