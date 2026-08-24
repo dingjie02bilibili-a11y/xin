@@ -95,6 +95,12 @@ func run_test() -> void:
 		game.equipped_cards.append("area")
 	game.card_drawbacks["area"] = "rental"
 	game.star_shards = 0
+	# show_shop 会先 bank_world_shards()，把地上没捡的星屑一并收进钱包。只清钱包
+	# 不清地面的话，前面几个阶段掉落的星屑会在这里变成收入，「空钱包」的前提就不
+	# 成立了——掉落带随机，所以表现为偶发失败。queue_free 要等一帧才真正生效。
+	for pickup in game.pickup_root.get_children():
+		pickup.queue_free()
+	await process_frame
 	game.show_shop(true)
 	await process_frame
 	game.close_shop()

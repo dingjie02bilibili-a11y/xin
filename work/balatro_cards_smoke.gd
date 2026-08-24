@@ -43,9 +43,21 @@ func run_test() -> void:
 	game.sell_shop_card("damage")
 	if game.campfire_stacks != 1: print("FAIL campfire"); quit(); return
 	game.close_shop()
-	equip(game, ["chain", "juggler"])
+	# 货架基数会随开店次数增长（prepare_shop_goods 里的 mini(2, (shop_visit-1)/2)），
+	# 所以不能钉死数字——这里钉 4 是固定 3 格时代的遗留，第 3 次开店时基数已经是 4。
+	# 改成在同一个 shop_visit 下比「有没有杂耍货架」的差值，测的才是这张卡声称的 +1。
+	equip(game, ["chain"])
+	game.shop_visit = 2
 	game.show_shop(true)
-	if game.shop_goods.size() != 4: print("FAIL juggler"); quit(); return
+	var base_goods: int = game.shop_goods.size()
+	if base_goods < game.SHOP_ITEM_COUNT:
+		print("FAIL juggler 基准货架只有 %d 件，差值判定失去意义" % base_goods); quit(); return
+	game.close_shop()
+	equip(game, ["chain", "juggler"])
+	game.shop_visit = 2
+	game.show_shop(true)
+	if game.shop_goods.size() != base_goods + 1:
+		print("FAIL juggler 无卡%d 有卡%d" % [base_goods, game.shop_goods.size()]); quit(); return
 	game.close_shop()
 	equip(game, ["chain", "luchador"])
 	var boss = game.spawn_enemy("星渊追猎者", true)
@@ -53,5 +65,5 @@ func run_test() -> void:
 	boss.set_affixes(test_affixes)
 	game.apply_luchador_counter(boss)
 	if boss.affixes.size() != 1 or game.equipped_cards.has("luchador"): print("FAIL luchador"); quit(); return
-	print("BALATRO_CARDS_SMOKE_OK loyalty=", loyalty_damage, " sequence=", sequence_damage, " boss_affixes=", boss.affixes.size())
+	print("BALATRO_CARDS_SMOKE_OK loyalty=", loyalty_damage, " sequence=", sequence_damage, " 货架 ", base_goods, "->", base_goods + 1, " boss_affixes=", boss.affixes.size())
 	quit()
