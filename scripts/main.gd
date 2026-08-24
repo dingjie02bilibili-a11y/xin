@@ -20,6 +20,10 @@ const MAINLINE_BOSS_SCHEDULE := [60, 120, 180, 240, 300, 355]
 # 逐章显式指定，保证 Boss 血量曲线单调递增（每章约 +33%）
 const MAINLINE_BOSS_HEALTH := [560.0, 830.0, 1180.0, 1620.0, 2140.0, 2760.0]
 const ENDLESS_WAVE_DURATION := 45.0
+# 战绩采样：每 0.25 秒记一次场面压力就够画出章节曲线，逐帧遍历敌人分组没必要。
+const RUN_SAMPLE_INTERVAL := 0.25
+# 无尽可以打到几十波，切片数必须封顶，否则存档会被一局无尽撑爆。
+const RUN_SLICE_LIMIT := 12
 const FIRST_SHOP_TIME := 38.0
 const SHOP_INTERVAL := 60.0
 const SHOP_ITEM_COUNT := 3
@@ -375,6 +379,12 @@ var spent_star_shards := 0
 var kills := 0
 var boss_kills := 0
 var damage_taken_this_run := 0.0
+# 战绩流水的局内采集缓冲：按章节（无尽按波次）切片，结算时交给 SaveManager。
+# 这些量只被记录，不参与任何战斗结算。
+var run_chapter_rows: Array[Dictionary] = []
+var run_bucket: Dictionary = {}
+var run_sample_timer := 0.0
+var run_boss_ttk: Array[float] = []
 var pending_boss_rewards: Array[Dictionary] = []
 var mainline_completion_pending := false
 var mainline_complete_overlay: Control
@@ -420,6 +430,8 @@ var boss_reward_overlay: Control
 var bonus_crit_damage := 0.0
 var burn_burst := false
 var finished_run := false
+# 每开一局自增，用来让上一局遗留的延时协程认出自己已经过期。
+var run_token := 0
 var next_shop_time := FIRST_SHOP_TIME
 var shop_pending := false
 var queued_shops := 0
@@ -517,6 +529,7 @@ func _process(delta: float) -> void:
 		return
 	queue_redraw()
 	elapsed += delta
+	sample_run_metrics(delta)
 	update_boss_card_disruptions(delta)
 	update_pet_tethers(delta)
 	update_conditional_card_effects(delta)
@@ -1432,6 +1445,7 @@ func start_game_after_prologue() -> void:
 	clear_game()
 	state = GameState.PLAYING
 	finished_run = false
+	run_token += 1
 	elapsed = 0.0
 	spawn_timer = 0.2
 	pulse_timer = 0.0
@@ -1441,6 +1455,10 @@ func start_game_after_prologue() -> void:
 	kills = 0
 	boss_kills = 0
 	damage_taken_this_run = 0.0
+	run_chapter_rows.clear()
+	run_bucket.clear()
+	run_sample_timer = 0.0
+	run_boss_ttk.clear()
 	pending_boss_rewards.clear()
 	mainline_completion_pending = false
 	run_achievement_start_count = SaveManager.data.achievements.size()
@@ -1978,7 +1996,8 @@ func release_skill_entity(id: String, target_position := Vector2.ZERO, trigger_e
 		echo_skill_after_delay(id, target_position, captured_damage)
 
 func echo_skill_after_delay(id: String, target_position: Vector2, captured_damage: Array[Dictionary]) -> void:
-	await get_tree().create_timer(0.28, true).timeout
+	if not await game_delay(0.28):
+		return
 	var pending_count := maxi(0, int(echo_pending.get(id, 1)) - 1)
 	if pending_count > 0:
 		echo_pending[id] = pending_count
@@ -2755,6 +2774,77 @@ func spawn_wavelet() -> void:
 	for i in amount:
 		spawn_enemy(chapter_enemy_kind(chapter, endless_wave if endless_mode else 0))
 
+# ---------------------------------------------------------------- 战绩流水采集
+# 这一段只做记录，不参与任何战斗结算：给「难度心流」留下一份可回溯的证据。
+
+# 主线按章节切片，无尽按波次切片；两者都写进 ch 字段，靠 mode 区分读法。
+func current_run_slice() -> int:
+	return endless_wave if endless_mode else current_mainline_chapter()
+
+func new_run_bucket(index: int) -> Dictionary:
+	return {"ch": index, "start": elapsed, "kills": kills, "dmg": damage_taken_this_run,
+		"hands": hands_played, "alive_sum": 0.0, "severed": 0, "samples": 0}
+
+func sample_run_metrics(delta: float) -> void:
+	var slice_index := current_run_slice()
+	if run_bucket.is_empty():
+		run_bucket = new_run_bucket(slice_index)
+	elif int(run_bucket.ch) != slice_index:
+		close_run_bucket()
+		run_bucket = new_run_bucket(slice_index)
+	run_sample_timer -= delta
+	if run_sample_timer > 0.0:
+		return
+	run_sample_timer = RUN_SAMPLE_INTERVAL
+	run_bucket.samples = int(run_bucket.samples) + 1
+	run_bucket.alive_sum = float(run_bucket.alive_sum) + float(get_tree().get_nodes_in_group("enemies").size())
+	# 断链时长占比是「宠物够不着目标」的直接读数，也是心流断点最灵敏的指标。
+	if not pet_link_broken.is_empty():
+		run_bucket.severed = int(run_bucket.severed) + 1
+
+func close_run_bucket() -> void:
+	if run_bucket.is_empty():
+		return
+	var bucket := run_bucket
+	# 先摘下来再判上限：超限时这一片只是不落盘，缓冲仍然要归零，
+	# 否则下一片会拿旧起点算增量。
+	run_bucket = {}
+	if run_chapter_rows.size() >= RUN_SLICE_LIMIT:
+		return
+	var samples := maxf(1.0, float(bucket.samples))
+	run_chapter_rows.append({
+		"ch": int(bucket.ch),
+		"secs": elapsed - float(bucket.start),
+		"kills": kills - int(bucket.kills),
+		"dmg": damage_taken_this_run - float(bucket.dmg),
+		"hands": hands_played - int(bucket.hands),
+		"alive": float(bucket.alive_sum) / samples,
+		"severed": float(bucket.severed) / samples * 100.0,
+		"hp": (player.health / maxf(1.0, player.max_health) * 100.0) if is_instance_valid(player) else 0.0
+	})
+
+func build_run_summary(victory: bool) -> Dictionary:
+	# chapter 是「按时间推进到第几章」，boss_kills 是「实际打穿了几关」。
+	# 两者会不一致（例如卡在第 4 关直到 6 分钟），而这个差值本身就是压力信号。
+	return {
+		"character": player.character_name if is_instance_valid(player) else str(SaveManager.data.selected_character),
+		"mode": "endless" if endless_mode else "mainline",
+		"victory": victory,
+		"seconds": elapsed,
+		"chapter": current_mainline_chapter(),
+		"wave": endless_wave if endless_mode else 1,
+		"kills": kills,
+		"boss_kills": boss_kills,
+		"damage": damage_taken_this_run,
+		"hands": hands_played,
+		"earned": total_star_shards,
+		"spent": spent_star_shards,
+		"deck": equipped_cards.size(),
+		"pets": equipped_pet_count(),
+		"ttk": run_boss_ttk,
+		"rows": run_chapter_rows
+	}
+
 func current_mainline_chapter() -> int:
 	if endless_mode:
 		return 6
@@ -2839,6 +2929,7 @@ func check_boss_timing() -> void:
 			var profile: Array = boss_schedule[mark]
 			var boss := spawn_enemy(profile[0], true)
 			boss.set_meta("story_chapter", chapter)
+			boss.set_meta("spawn_elapsed", elapsed)
 			boss.set_meta("damage_taken_at_spawn", damage_taken_this_run)
 			boss.set_chapter_tier(chapter)
 			boss.set_mainline_health(MAINLINE_BOSS_HEALTH[clampi(chapter - 1, 0, MAINLINE_BOSS_HEALTH.size() - 1)])
@@ -2872,11 +2963,13 @@ func spawn_endless_boss() -> void:
 	var boss_index := int(endless_wave / 3.0 - 1.0) % boss_types.size()
 	show_toast("无尽深处传来不祥回响……", Color("ef7791"), 1.2)
 	play_boss_warning_sound()
-	await get_tree().create_timer(0.85, false).timeout
+	if not await game_delay(0.85):
+		return
 	if state != GameState.PLAYING or not endless_mode or not is_instance_valid(player):
 		return
 	var boss := spawn_enemy(boss_types[boss_index], true)
 	boss.set_meta("story_chapter", 0)
+	boss.set_meta("spawn_elapsed", elapsed)
 	boss.set_meta("damage_taken_at_spawn", damage_taken_this_run)
 	boss.set_chapter_tier(6 + int(floor(maxi(0, endless_wave - 1) / 6.0)))
 	boss.set_affixes(roll_boss_affixes(6 + int(floor(maxi(0, endless_wave - 1) / 6.0)), boss.boss_style))
@@ -2968,7 +3061,9 @@ func on_boss_affix_requested(source, effect_id: String, duration: float) -> void
 	resolve_boss_affix_after_warning(source, effect_id, duration)
 
 func resolve_boss_affix_after_warning(source, effect_id: String, duration: float) -> void:
-	await get_tree().create_timer(0.8, false).timeout
+	if not await game_delay(0.8):
+		boss_affix_pending = false
+		return
 	boss_affix_pending = false
 	if state != GameState.PLAYING or not is_instance_valid(source) or source.health <= 0.0:
 		return
@@ -3661,7 +3756,8 @@ func fire_orbit_damage(source_id := "") -> bool:
 	var satellite_bonus := int(floor(core_mastery_rank("satellite_engine") / 2.0)) if is_card_active("satellite_engine") else 0
 	var effective_orbit_count := maxi(1, orbit_count + orbit_bonus + satellite_bonus)
 	var orbit_radius := 104.0 + core_mastery_rank("blade_dance") * 4.0
-	var spin := Time.get_ticks_msec() * (0.0022 + core_mastery_rank("blade_dance") * 0.00012)
+	# 同上：卫星相位改用本局游戏时钟，避免命中判定随真实帧率漂移。
+	var spin := elapsed * (2.2 + core_mastery_rank("blade_dance") * 0.12)
 	for i in effective_orbit_count:
 		positions.append(origin + Vector2.from_angle(spin + TAU * i / effective_orbit_count) * orbit_radius)
 	# 卫星是「点」，命中窗口只有 30 像素，实测守卫一整章只能触发 30 多次、直接被淹。
@@ -3925,6 +4021,8 @@ func on_enemy_defeated(enemy: Enemy, value: int) -> void:
 					show_toast("蓝蜡封研究 · 完成%d次星式研究" % completed_research, Color("70d7ff"), 1.0)
 		clear_boss_card_disruptions(enemy)
 		boss_kills += 1
+		if enemy.has_meta("spawn_elapsed") and run_boss_ttk.size() < RUN_SLICE_LIMIT:
+			run_boss_ttk.append(elapsed - float(enemy.get_meta("spawn_elapsed")))
 		# 终章的压力主要来自群怪的持续接触伤害，护甲成长正好作用在这里。
 		player.increase_max_health(BOSS_CLEAR_MAX_HEALTH)
 		player.armor += BOSS_CLEAR_ARMOR
@@ -5593,6 +5691,19 @@ func resume_game() -> void:
 	get_tree().paused = false
 	state = GameState.PLAYING
 
+# 战斗内的延时一律走游戏时钟。SceneTreeTimer 走的是墙钟，两种参数都不能用：
+#   process_always=true  —— 固定步长仿真里的解冻点取决于真实帧率，跑分不可复现；
+#   process_always=false —— 仿真全程 paused，计时器根本不 tick，回调永远不触发。
+# 返回值表示「醒来时还是同一局」，过期的协程必须自己退出，不能作用到下一局。
+func game_delay(seconds: float) -> bool:
+	var token := run_token
+	var deadline := elapsed + seconds
+	while elapsed < deadline:
+		await get_tree().process_frame
+		if token != run_token or state == GameState.GAME_OVER or state == GameState.MENU:
+			return false
+	return token == run_token
+
 func end_run(victory: bool) -> void:
 	if finished_run:
 		return
@@ -5606,7 +5717,8 @@ func end_run(victory: bool) -> void:
 		player.can_move = false
 	award_achievement("first_expedition")
 	check_achievement_progress()
-	SaveManager.finish_run(elapsed, kills, boss_kills)
+	close_run_bucket()
+	SaveManager.finish_run(build_run_summary(victory))
 	clear_ui()
 	var root := full_rect_control()
 	ui_layer.add_child(root)

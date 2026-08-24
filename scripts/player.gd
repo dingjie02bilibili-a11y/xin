@@ -61,7 +61,7 @@ func _physics_process(delta: float) -> void:
 		heal(regen * delta)
 	if not can_move:
 		velocity = velocity.move_toward(Vector2.ZERO, deceleration * delta)
-		move_and_slide()
+		global_position += velocity * delta
 		return
 	var input := Input.get_vector("move_left", "move_right", "move_up", "move_down")
 	var desired_velocity := input.normalized() * speed
@@ -71,7 +71,12 @@ func _physics_process(delta: float) -> void:
 		velocity = velocity.move_toward(desired_velocity, active_acceleration * delta)
 	else:
 		velocity = velocity.move_toward(Vector2.ZERO, deceleration * delta)
-	move_and_slide()
+	# 工程里没有任何 CollisionShape，move_and_slide() 不做碰撞、只是积分。但它取的
+	# 步长不是这里传进来的 delta：Godot 4 里它只在物理帧内用 physics delta，
+	# 在物理帧之外（无窗口仿真手动调 _physics_process 时）改用 process delta，
+	# 也就是真实帧时长。于是同种子两次仿真的位移完全不同，平衡跑分不可复现。
+	# 真机上两者相等，所以直接按 delta 积分：行为一致，且步长永远由调用方决定。
+	global_position += velocity * delta
 	if velocity.length_squared() > 1.0:
 		rotation = lerp_angle(rotation, velocity.angle(), minf(1.0, delta * 12.0))
 

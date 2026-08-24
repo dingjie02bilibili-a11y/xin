@@ -26,7 +26,9 @@
 - 击败 Boss 后从遗物共鸣或宠物版本中选择奖励，并获得最大生命、护甲与大额回复。
 - 完成第六章后可以胜利结算，也可以继续进入无尽挑战。
 - 所有战斗强化只在当前远征生效；局外仅保留角色、成就和故事解锁，不提供永久属性加成。
-- 存档位于 Godot 的 `user://starfall_save.json`。
+- 存档位于 Godot 的 `user://starfall_save.json`，其中 `run_history` 记录最近 40 局的战绩流水
+  （角色、模式、生存时长、逐章受伤/末血/场均敌人/断链占比、Boss 击杀耗时）。它不提供任何
+  属性加成，只作为后续「难度心流」调节的输入。
 
 ## 角色
 
@@ -48,6 +50,8 @@
 - `scripts/skill_entity.gd`：宠物实体、跟随运动与表现
 - `scripts/save_manager.gd`：JSON 存档、成就、角色和故事解锁
 - `work/*_smoke.gd`：无窗口回归测试（含数值审计与无尽模式门禁）
+- `work/balance_sim.gd`：无窗口战斗模拟与平衡跑分；`-- 游侠 1 selftest` 是确定性门禁
+- `work/history_fixtures.gd`：合成战绩画像（empty/weak/median/strong），供仿真声明「跑在哪种玩家身上」
 - `work/balance_sim.gd`：无窗口战斗模拟，按固定步长驱动真实游戏循环并逐章输出难度压力
 
 ## 核心平衡入口

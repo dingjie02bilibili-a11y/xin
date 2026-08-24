@@ -3,22 +3,36 @@ extends SceneTree
 # 工程里没有任何 CollisionShape，move_and_slide 等价于纯积分，所以手动步进
 # 与实机一致，且不受实时帧率影响、可复现。
 #
-# 用法：godot --headless --path . --script work/balance_sim.gd -- <角色|all> [种子数] [verbose]
+# 用法：godot --headless --path . --script work/balance_sim.gd -- <角色|all> [种子数] [模式] [战绩画像]
+#   模式：留空=跑分；verbose=逐局明细；trace=把状态轨迹写到 work/sim_trace.txt；
+#         selftest=同种子跑两遍比对轨迹的确定性门禁（跑 90 秒，输出 DETERMINISM_SMOKE_OK）
+#
+# 战绩画像（empty/weak/median/strong）决定本次跑分假设的「历史玩家」。难度一旦
+# 开始读历史，不声明画像的跑分就没有意义——它会隐式依赖本机存档。现在难度还没
+# 接历史，这个参数是惰性的，但从第一天就把它写进表头，避免以后拿旧数据对新数据。
 
 const DT := 1.0 / 40.0
 const RUN_SECONDS := 470.0
 const CHAPTER_MARKS := [60.0, 120.0, 180.0, 240.0, 300.0, 470.0]
+const HistoryFixtures = preload("res://work/history_fixtures.gd")
 const ALL_CHARACTERS := ["游侠", "骑士", "星术师", "守卫", "影舞者", "星火使"]
 
 var game
 var save
 var verbose := false
+var history_profile := "median"
 var bot_phase := 0.0
 var boss_spawn_time := {}
 var boss_ttk: Array[float] = []
 var chapter_rows: Array[Dictionary] = []
 var died_at := -1.0
 var log_file: FileAccess
+# 确定性轨迹：逐秒把关键状态写成一行，两次跑分 diff 一下就能定位首次分叉点。
+var trace_file: FileAccess
+var trace := false
+var selftest := false
+var trace_lines: Array[String] = []
+var run_limit := RUN_SECONDS
 
 func emit(line: String) -> void:
 	print(line)
@@ -39,17 +53,27 @@ func run_batch() -> void:
 	var who := arg(0, "游侠")
 	var seed_count := int(arg(1, "3"))
 	verbose = arg(2, "") == "verbose"
+	trace = arg(2, "") == "trace"
+	selftest = arg(2, "") == "selftest"
+	if selftest:
+		trace = true
+		# 90 秒足以覆盖刷怪、第一次商店、第一个 Boss 和 Boss 奖励弹窗——
+		# 已知的墙钟泄漏点全在这段里，再往后只是重复。
+		run_limit = 90.0
+	history_profile = arg(3, "median")
 	var characters: Array = ALL_CHARACTERS if who == "all" else [who]
 
 	var packed := load("res://scenes/main.tscn") as PackedScene
 	game = packed.instantiate()
 	root.add_child(game)
-	await process_frame
+	await frame()
 	game.test_mode = true
 	save = root.get_node("SaveManager")
-	save.data.intro_seen = true
-	save.data.achievements = ["boss_breaker", "survive_three", "combo_adept", "streak_master", "molten_master"]
+	emit("战绩画像：%s（每局开跑前重置存档，结论不受本机进度影响）" % history_profile)
 
+	if selftest:
+		await run_selftest(str(characters[0]))
+		return
 	emit("角色   存活  Boss 死亡 | 每章场均敌人        | 每章断链时长%       | 每章受伤            | 每章末HP%           | BossTTK             | 卡组/宠 星屑得/花/余")
 	var grand: Array[Dictionary] = []
 	for character in characters:
@@ -63,6 +87,42 @@ func run_batch() -> void:
 
 # ---------------------------------------------------------------- 单局模拟
 
+# 每局开跑前把存档钉回已知状态：合成战绩 + 固定成就集 + 指定角色。
+# 少了这一步，仿真会继承上一局写下的战绩，也会读到本机真实进度。
+# 确定性门禁：同一角色、同一种子跑两遍，逐行比对状态轨迹。
+# 这条一旦挂了，说明又有东西把墙钟（真实帧长 / 真实时刻）漏进了战斗逻辑，
+# 此时任何平衡结论都不成立——先修复现性，再谈数值。
+func run_selftest(character: String) -> void:
+	await simulate_one(character, 1000)
+	var first := trace_lines.duplicate()
+	trace_lines.clear()
+	await simulate_one(character, 1000)
+	var second := trace_lines.duplicate()
+	if first.is_empty():
+		print("DETERMINISM_SMOKE_FAILED 没有采到任何轨迹")
+		quit(1)
+		return
+	if first.size() != second.size():
+		print("DETERMINISM_SMOKE_FAILED 轨迹长度不同 %d vs %d" % [first.size(), second.size()])
+		quit(1)
+		return
+	for index in first.size():
+		if first[index] != second[index]:
+			print("DETERMINISM_SMOKE_FAILED 第 %d 行起分叉" % (index + 1))
+			print("  A: %s" % first[index])
+			print("  B: %s" % second[index])
+			quit(1)
+			return
+	print("DETERMINISM_SMOKE_OK 同种子两遍共 %d 行轨迹逐行一致" % first.size())
+	quit(0)
+
+func reset_save(character: String) -> void:
+
+	save.apply_test_fixture(HistoryFixtures.profile(history_profile, character))
+	save.data.intro_seen = true
+	save.data.achievements = ["boss_breaker", "survive_three", "combo_adept", "streak_master", "molten_master"]
+	save.data.selected_character = character
+
 func simulate_one(character: String, run_seed: int) -> Dictionary:
 	seed(run_seed)
 	bot_phase = 0.0
@@ -71,15 +131,23 @@ func simulate_one(character: String, run_seed: int) -> Dictionary:
 	chapter_rows.clear()
 	died_at = -1.0
 
-	save.data.selected_character = character
+	reset_save(character)
 	game.show_main_menu()
-	await process_frame
+	await frame()
 	game.start_game_after_prologue()
-	await process_frame
+	# main 自己是 PROCESS_MODE_ALWAYS，停掉它也必须赶在第一个真实帧之前：晚一帧，
+	# _process 就会按真实 delta 给 elapsed 加一笔随机头款，而敌人血量正比于 elapsed
+	#（0.92 + elapsed / 520），于是同种子两次跑分的怪血从第一只就开始分叉。
+	game.set_process(false)
+	# 必须在这里冻结，不能等到 await 之后：start_game_after_prologue 是同步的，
+	# 世界一建好就存在了，而 await 期间引擎会按真实 delta 推它若干个物理帧——
+	# 推几帧取决于机器快慢。整局的初始状态因此每次都不一样，同种子也白搭。
+	freeze_world()
 	# 引擎不再驱动任何游戏节点，全部由本脚本按固定步长手动步进。
 	# 帧仍然照常推进，用来刷新 queue_free / call_deferred。
-	game.set_process(false)
 	paused = true
+	await frame()
+	freeze_world()
 
 	var elapsed := 0.0
 	var chapter := 0
@@ -90,8 +158,8 @@ func simulate_one(character: String, run_seed: int) -> Dictionary:
 	var last_earned := 0
 	var last_spent := 0
 
-	while elapsed < RUN_SECONDS:
-		await process_frame
+	while elapsed < run_limit:
+		await frame()
 		if game.state == game.GameState.GAME_OVER or not is_instance_valid(game.player):
 			died_at = elapsed
 			break
@@ -105,6 +173,8 @@ func simulate_one(character: String, run_seed: int) -> Dictionary:
 		step_world(DT)
 		elapsed += DT
 		track_bosses(elapsed)
+		if trace:
+			emit_trace(character, run_seed, elapsed)
 		var alive := get_nodes_in_group("enemies").size()
 		if int(game.pet_link_broken.size()) > 0:
 			bucket.severed_frames += 1
@@ -136,11 +206,74 @@ func simulate_one(character: String, run_seed: int) -> Dictionary:
 	if verbose:
 		emit("   seed=%d %s %.0fs boss=%d deck=%s ttk=%s" % [run_seed, character, elapsed, game.boss_kills, str(game.equipped_cards), str(boss_ttk)])
 	game.show_main_menu()
-	paused = false
-	await process_frame
+	await frame()
 	return result
 
+func emit_trace(character: String, run_seed: int, elapsed: float) -> void:
+	# 开局 2 秒逐步长记录（初始化类的分叉都在这段），之后每秒一行。
+	var fine := elapsed <= 2.0
+	if not fine and absf(elapsed - roundf(elapsed)) > DT * 0.5:
+		return
+	var p = game.player
+	var pet_hash := 0.0
+	var pet_count := 0
+	for id in game.skill_entities:
+		var pet = game.skill_entities[id]
+		if is_instance_valid(pet):
+			pet_count += 1
+			# life_time 必须进哈希：宠物多吃一个真实帧时位置偏移可能小到看不出来，
+			# 但 life_time 会直接跳一整帧，是「墙钟又漏进来了」最灵敏的指示器。
+			pet_hash += pet.global_position.x * 2.3 + pet.global_position.y * 5.7 + pet.life_time * 13.1
+	var proj_count: int = game.projectile_root.get_child_count() if is_instance_valid(game.projectile_root) else -1
+	var enemy_hash := 0.0
+	for e in get_nodes_in_group("enemies"):
+		if is_instance_valid(e):
+			enemy_hash += e.global_position.x * 1.7 + e.global_position.y * 3.1 + e.health * 11.3
+	var line := "%s/%d t=%8.4f kills=%4d hp=%8.3f alive=%3d shards=%5d hash=%14.3f px=%9.4f py=%9.4f pets=%d pethash=%14.4f proj=%3d pvx=%.9f pvy=%.9f" % [
+		character, run_seed, elapsed, game.kills,
+		(p.health if is_instance_valid(p) else -1.0),
+		get_nodes_in_group("enemies").size(), game.total_star_shards, enemy_hash,
+		(p.global_position.x if is_instance_valid(p) else 0.0),
+		(p.global_position.y if is_instance_valid(p) else 0.0), pet_count, pet_hash, proj_count,
+		(p.velocity.x if is_instance_valid(p) else 0.0), (p.velocity.y if is_instance_valid(p) else 0.0)]
+	if selftest:
+		trace_lines.append(line)
+		return
+	if trace_file == null:
+		trace_file = FileAccess.open("res://work/sim_trace.txt", FileAccess.WRITE)
+	if trace_file == null:
+		return
+	trace_file.store_line(line)
+	trace_file.flush()
+
+# main 在 _ready 里把自己设成 PROCESS_MODE_ALWAYS（为了让暂停菜单能动），子节点默认
+# INHERIT，于是整棵战斗树都无视 get_tree().paused。这有两个后果：
+#   1) 每个实体被「手动固定步长」和「引擎真实 delta」各推一次，等于双倍步进；
+#   2) 推几次取决于机器快慢，同种子两次跑分能差出上百秒。
+# 而且游戏自己会在开关商店时改写 get_tree().paused，光靠 paused 挡不住。
+# 所以把战斗世界的几个根节点显式降回 PAUSABLE，让 paused 真正管得住它们，
+# 全部由本脚本按固定步长推进。UI 弹窗自己声明了 ALWAYS，不受影响。
+# 注意不能用 DISABLED：那会把物理体从物理空间里摘掉，move_and_slide 变成空转，
+# 手动步进也推不动任何东西（实测整局站桩、零击杀）。
+# 每推进一个真实帧，都必须把暂停压回去。游戏自己会在关闭商店/奖励弹窗时把
+# get_tree().paused 改回 false（真机上这是对的），而仿真里只要漏掉一帧，
+# 引擎就会按真实帧长把整个世界推一把：实测宠物的 life_time 在一步里跳了
+# 0.083 秒而不是 0.025 秒，同种子两次跑分从那一刻起彻底分叉。
+func frame() -> void:
+	# 压回暂停必须在 await 之前：按钮回调（比如关掉奖励弹窗）会把 paused 改成 false，
+	# 如果只在 await 之后补，那一帧已经按真实帧长跑掉了，补也来不及。
+	paused = true
+	await process_frame
+	paused = true
+
+func freeze_world() -> void:
+	for holder in [game.entity_root, game.projectile_root, game.visual_root,
+			game.hazard_root, game.pickup_root, game.player]:
+		if is_instance_valid(holder):
+			holder.process_mode = Node.PROCESS_MODE_PAUSABLE
+
 func new_bucket(index: int, kills_so_far: int) -> Dictionary:
+
 	return {"chapter": index, "kills": kills_so_far, "alive_sum": 0.0, "alive_avg": 0.0,
 		"alive_max": 0, "damage": 0.0, "earned": 0, "spent": 0, "hp_pct": 0.0, "deck": 0, "hands": 0, "severed_frames": 0, "severed_pct": 0.0}
 
@@ -298,25 +431,25 @@ func set_axis(positive: String, negative: String, value: float) -> void:
 func handle_modal() -> void:
 	if is_instance_valid(game.booster_overlay):
 		press_first_button(game.booster_overlay)
-		await process_frame
+		await frame()
 		return
 	if is_instance_valid(game.card_replace_overlay):
 		resolve_replacement()
-		await process_frame
+		await frame()
 		return
 	if is_instance_valid(game.shop_overlay):
 		await do_shopping()
 		return
 	if is_instance_valid(game.boss_reward_overlay):
 		press_first_button(game.boss_reward_overlay)
-		await process_frame
+		await frame()
 		return
 	if is_instance_valid(game.mainline_complete_overlay):
 		press_first_button(game.mainline_complete_overlay)
-		await process_frame
+		await frame()
 		return
 	game.state = game.GameState.PLAYING
-	await process_frame
+	await frame()
 
 func press_first_button(node: Node) -> bool:
 	for child in node.get_children():
@@ -372,22 +505,22 @@ func do_shopping() -> void:
 			break
 		bought.append(str(game.shop_goods[best].get("id", "")))
 		game.purchase_shop_offer(best)
-		await process_frame
+		await frame()
 		if is_instance_valid(game.card_replace_overlay):
 			resolve_replacement()
-			await process_frame
+			await frame()
 		if is_instance_valid(game.booster_overlay):
 			press_first_button(game.booster_overlay)
-			await process_frame
+			await frame()
 			if is_instance_valid(game.card_replace_overlay):
 				resolve_replacement()
-				await process_frame
+				await frame()
 	if is_instance_valid(game.shop_overlay):
 		game.close_shop()
 	if verbose:
 		print("     [店%d] %d->%d 货架%s 买%s 卡组%s" % [int(game.shop_visit), wallet_before, int(game.star_shards), str(listing), str(bought), str(game.equipped_cards)])
 	paused = true
-	await process_frame
+	await frame()
 
 func resolve_replacement() -> void:
 	var incoming := ""

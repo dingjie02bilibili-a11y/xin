@@ -151,7 +151,12 @@ func _physics_process(delta: float) -> void:
 		_update_normal(delta, to_target)
 	knockback = knockback.move_toward(Vector2.ZERO, 700.0 * delta)
 	velocity = move_velocity * (0.58 if frost_time > 0.0 and not is_boss else (0.72 if frost_time > 0.0 else 1.0)) + knockback
-	move_and_slide()
+	# 工程里没有任何 CollisionShape，move_and_slide() 不做碰撞、只是积分。但它取的
+	# 步长不是这里传进来的 delta：Godot 4 里它只在物理帧内用 physics delta，
+	# 在物理帧之外（无窗口仿真手动调 _physics_process 时）改用 process delta，
+	# 也就是真实帧时长。于是同种子两次仿真的位移完全不同，平衡跑分不可复现。
+	# 真机上两者相等，所以直接按 delta 积分：行为一致，且步长永远由调用方决定。
+	global_position += velocity * delta
 	if to_target.length() < radius + 20.0 and contact_timer <= 0.0:
 		# Boss 的威胁应该来自可预警、可闪避的招式，而不是碰一下就掉一大块。
 		# 追击型 Boss 冲刺速度高于玩家移速，纯接触伤害等于无法规避的固定 DPS。
@@ -260,7 +265,10 @@ func _update_boss(delta: float, to_target: Vector2) -> void:
 				var center := target.global_position
 				var trap_count := mini(6, (4 if affixes.has("rapid_pattern") else 3) + boss_tier - 1)
 				for i in trap_count:
-					var angle := TAU * i / trap_count + Time.get_ticks_msec() * 0.001
+					# 环的朝向必须来自游戏时钟。原先用 Time.get_ticks_msec()（墙钟）取角，
+					# 陷阱落点会随真实帧率漂移，同种子的两次仿真因此测不出同一个难度。
+					# visual_time 是本敌人按 delta 累积的存活秒数，转速一致但可复现。
+					var angle := TAU * i / trap_count + visual_time
 					# 圆环向中心收拢并彼此重叠：原地停留也会被命中，仍可横向离开预警区躲避。
 					hazard_requested.emit(center + Vector2.from_angle(angle) * 62.0, damage * 0.40, 96.0)
 				_open_weakness_window()
