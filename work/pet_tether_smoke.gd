@@ -1,5 +1,5 @@
 extends SceneTree
-# 供能链路：玩家与宠物之间是一条持续的能量通道，能量沿它连续注入；
+# 充能链路：玩家与宠物之间是一条持续的能量通道，能量沿它连续注入；
 # 敌人挤进玩家与宠物之间会切断链条，宠物随即停摆，走过去才能重新接上。
 
 func _initialize() -> void:
@@ -21,12 +21,12 @@ func run_test() -> void:
 	game.refresh_derived_card_effects()
 	await process_frame
 
-	var enemy = game.spawn_enemy("追猎者")
+	var enemy = game.spawn_enemy("追踪怪")
 	enemy.global_position = game.skill_entity_origin("chain") + Vector2(90, 0)
 	enemy.speed = 0.0
 	var health_before: float = enemy.health
 
-	# 供能是连续注入，不再产生任何飞行物
+	# 充能是连续注入，不再产生任何飞行物
 	game.pet_energy["chain"] = 0.0
 	game.fire_pulse()
 	assert(float(game.pet_energy.get("chain", 0.0)) > 0.0, "Tether did not feed the pet")
@@ -42,7 +42,7 @@ func run_test() -> void:
 	assert(bool(game.skill_cooldown_data("chain").get("energy", false)), "Pet HUD is not reporting energy instead of cooldown")
 
 	# 切断：宠物被弹开、停摆，并且不再接收能量
-	var cutter = game.spawn_enemy("重甲怪")
+	var cutter = game.spawn_enemy("铁甲怪")
 	var pet_before: Vector2 = game.skill_entity_origin("chain")
 	game.cut_pet_tether("chain", cutter)
 	assert(not game.pet_link_connected("chain"), "Tether did not register as cut")
@@ -59,5 +59,24 @@ func run_test() -> void:
 	assert(game.pet_link_connected("chain"), "Touching the pet did not restore the tether")
 	assert(not game.selectable_energy_pet_ids().is_empty(), "Reconnected pet still refuses energy")
 
-	print("PET_TETHER_SMOKE_OK energy=", game.pet_energy.get("chain", 0.0))
+	# 绳长：初始短，靠「绳子加长」一级一级放长，宠物出不去这个圈。
+	assert(is_equal_approx(game.pet_tether_range(), game.BASE_TETHER_RANGE),
+		"Fresh run should start on the short leash")
+	var short_range: float = game.pet_tether_range()
+	game.upgrade_levels["leash"] = 3
+	assert(game.pet_tether_range() > short_range, "绳子加长 did not lengthen the leash")
+	assert(is_equal_approx(game.pet_tether_range(), game.BASE_TETHER_RANGE + 3.0 * game.TETHER_RANGE_PER_LEVEL),
+		"Leash growth does not match the advertised step")
+	game.upgrade_levels["leash"] = 0
+
+	# 硬拴住：把宠物扔到很远，跑一帧之后它必须被拽回圈内
+	var pet = game.skill_entities.get("chain")
+	pet.global_position = game.player.global_position + Vector2(1200.0, 0.0)
+	# 拴绳的收束在宠物自己的 _process 里；这个用例是手动步进的，直接驱动它。
+	pet._process(0.05)
+	var leashed: float = game.player.global_position.distance_to(pet.global_position)
+	assert(leashed <= game.pet_tether_range() + 1.0,
+		"Pet escaped the leash: %.1f > %.1f" % [leashed, game.pet_tether_range()])
+
+	print("PET_TETHER_SMOKE_OK energy=", game.pet_energy.get("chain", 0.0), " leashed=", leashed)
 	quit()

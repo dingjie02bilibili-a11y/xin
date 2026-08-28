@@ -10,7 +10,7 @@ signal affix_requested(source, effect_id: String, duration: float)
 signal dramatic_attack(strength: float)
 
 var target: Player
-var kind := "追猎者"
+var kind := "追踪怪"
 var health := 30.0
 var max_health := 30.0
 var speed := 95.0
@@ -65,26 +65,26 @@ func setup(enemy_kind: String, difficulty: float, player_ref: Player) -> void:
 	kind = enemy_kind
 	target = player_ref
 	match kind:
-		"追猎者":
+		"追踪怪":
 			health = 24.0; speed = 105.0; damage = 5.5; xp_value = 4; radius = 15.0; tint = Color("ff5c8a"); ai_role = "chaser"; move_acceleration = 680.0
-		"疾行兽":
+		"飞奔怪":
 			health = 15.0; speed = 170.0; damage = 4.0; xp_value = 5; radius = 12.0; tint = Color("f97316"); ai_role = "flanker"; move_acceleration = 980.0; turn_acceleration = 1450.0
-		"重甲怪":
+		"铁甲怪":
 			health = 75.0; speed = 60.0; damage = 9.0; xp_value = 9; radius = 23.0; tint = Color("a78bfa"); ai_role = "tank"; move_acceleration = 300.0; turn_acceleration = 440.0; move_deceleration = 420.0
-		"咒术师":
+		"远射怪":
 			health = 42.0; speed = 72.0; damage = 7.0; xp_value = 10; radius = 17.0; tint = Color("22d3ee"); ai_role = "caster"; move_acceleration = 460.0; turn_acceleration = 760.0
-		"星渊追猎者":
+		"赫巡·追赶者":
 			health = 760.0; speed = 112.0; damage = 16.0; xp_value = 50; radius = 46.0; tint = Color("fb7185"); is_boss = true; boss_style = "pursuit"; move_acceleration = 760.0; turn_acceleration = 1050.0
-		"星渊禁锢者":
+		"弥垣·关门人":
 			health = 900.0; speed = 52.0; damage = 17.0; xp_value = 60; radius = 50.0; tint = Color("a78bfa"); is_boss = true; boss_style = "control"; move_acceleration = 330.0; turn_acceleration = 520.0
-		"星渊裁决者":
+		"零号·守塔机器":
 			health = 1080.0; speed = 48.0; damage = 20.0; xp_value = 70; radius = 52.0; tint = Color("facc15"); is_boss = true; boss_style = "burst"; move_acceleration = 300.0; turn_acceleration = 470.0
 	health *= difficulty
 	# 原来的斜率让六章的接触伤害只涨 10%，后期压力全部来自数量、缺少「这只怪很危险」的层次。
 	# 攻击范围收进屏幕后敌人必然更靠近玩家，接触伤害相应下调
 	damage *= (0.40 + difficulty * 0.62) * 0.88
 	max_health = health
-	cuts_tethers = kind in ["重甲怪", "咒术师"]
+	cuts_tethers = kind in ["铁甲怪", "远射怪"]
 	strafe_sign = -1.0 if randf() < 0.5 else 1.0
 	decision_timer = randf_range(0.55, 1.4)
 	queue_redraw()
@@ -101,7 +101,7 @@ func set_chapter_tier(chapter: int) -> void:
 	damage *= 1.0 + float(boss_chapter - 1) * 0.09
 
 # 主线 Boss 的血量不能再由「原型基础值 × 时间线性难度」决定：三种原型在六章里
-# 循环两遍，第 4 章的追猎者(760)会比第 3 章的裁决者(1080)还弱 23%。改为按章直接指定。
+# 循环两遍，第 4 章的追踪怪(760)会比第 3 章的裁决者(1080)还弱 23%。改为按章直接指定。
 func set_mainline_health(value: float) -> void:
 	health = value
 	max_health = value
@@ -110,14 +110,14 @@ func affix_summary() -> String:
 	var names: Array[String] = []
 	for id in affixes:
 		match id:
-			"rapid_pattern": names.append("急袭脉冲")
-			"riftfield": names.append("裂隙蔓延")
-			"exposed_core": names.append("暴露核心")
-			"prism_shield": names.append("棱镜屏障")
-			"sealed_hand": names.append("封印契约")
-			"pet_thief": names.append("星渊窃宠")
-			"pet_charm": names.append("倒戈魅惑")
-			"reverse_shuffle": names.append("逆序洗牌")
+			"rapid_pattern": names.append("加速出招")
+			"riftfield": names.append("地面陷阱")
+			"exposed_core": names.append("露出弱点")
+			"prism_shield": names.append("蓝色护盾")
+			"sealed_hand": names.append("封住卡牌")
+			"pet_thief": names.append("偷走宠物")
+			"pet_charm": names.append("迷惑宠物")
+			"reverse_shuffle": names.append("卡牌倒转")
 	return " · ".join(names)
 
 func _physics_process(delta: float) -> void:
@@ -202,7 +202,7 @@ func _update_normal(delta: float, to_target: Vector2) -> void:
 				shoot_timer = randf_range(1.45, 1.9)
 				var shot_direction := (predicted_target - global_position).normalized()
 				fired.emit(global_position, shot_direction, damage)
-	# 重甲怪与咒术师会主动去剪供能链条：普通怪只是路过误伤，精英是奔着链条去的。
+	# 铁甲怪与远射怪会主动去剪充能链条：普通怪只是路过误伤，精英是奔着链条去的。
 	if cuts_tethers and tether_bait != Vector2.ZERO:
 		var to_bait := tether_bait - global_position
 		if to_bait.length() > 8.0:
@@ -354,7 +354,7 @@ func take_damage(amount: float, push: Vector2 = Vector2.ZERO, damage_tag := "dir
 	if weakness_time > 0.0:
 		amount *= 1.75
 	if is_boss:
-		# 单次伤害封顶在最大生命的 6%：Boss 是关卡高潮，不该被一次乘算爆发在
+		# 单次伤害封顶在最大生命的 6%：Boss 是关卡高潮，不该被一次乘法加成爆发在
 		# 三五秒内融掉。这条同时把「同一局里 5 秒和 40 秒并存」的方差压回来。
 		amount = minf(amount, max_health * BOSS_HIT_CAP)
 	health -= amount
@@ -492,7 +492,7 @@ func _draw() -> void:
 			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	else:
 		var points := PackedVector2Array()
-		var corners := 6 if kind != "疾行兽" else 4
+		var corners := 6 if kind != "飞奔怪" else 4
 		for i in corners:
 			points.append(Vector2.from_angle(TAU * i / corners) * radius)
 		draw_colored_polygon(points, draw_tint)
@@ -503,14 +503,29 @@ func _draw() -> void:
 		var w := radius * 2.0
 		draw_rect(Rect2(-w * 0.5, -radius - 11.0, w, 5.0), Color("351b3b"))
 		draw_rect(Rect2(-w * 0.5, -radius - 11.0, w * clampf(health / max_health, 0, 1), 5.0), Color("7cff6b"))
+	# 四种状态过去都是同心圆环、只有颜色不同，其中电(70d7ff)和冰(93c5fd)几乎同色。
+	# 现在按形状区分：火是圆环，电是锯齿，光环记号是三角，冰是四根冰晶。
 	if burn_time > 0.0:
 		draw_arc(Vector2.ZERO, radius + 5.0, 0, TAU, 24, Color("fb923c"), 2.0)
 	if shock_time > 0.0:
-		draw_arc(Vector2.ZERO, radius + 8.0, 0, TAU, 24, Color("70d7ff"), 2.0)
+		var zig := PackedVector2Array()
+		for i in 13:
+			var a := TAU * float(i) / 12.0
+			zig.append(Vector2.from_angle(a) * (radius + (11.0 if i % 2 == 0 else 5.0)))
+		draw_polyline(zig, Color("70d7ff"), 2.0, true)
 	if resonance_time > 0.0:
-		draw_arc(Vector2.ZERO, radius + 11.0, 0, TAU, 24, Color("c084fc"), 2.0)
+		for i in 3:
+			var a := TAU * float(i) / 3.0 + visual_time * 1.6
+			var tip := Vector2.from_angle(a) * (radius + 14.0)
+			var left := Vector2.from_angle(a + 0.34) * (radius + 8.0)
+			var right := Vector2.from_angle(a - 0.34) * (radius + 8.0)
+			draw_colored_polygon(PackedVector2Array([tip, left, right]), Color("c084fc"))
 	if frost_time > 0.0:
-		draw_arc(Vector2.ZERO, radius + 14.0, 0, TAU, 24, Color("93c5fd"), 2.0)
+		for i in 4:
+			var a := TAU * float(i) / 4.0 + PI * 0.25
+			var spoke := Vector2.from_angle(a)
+			draw_line(spoke * (radius + 3.0), spoke * (radius + 17.0), Color("93c5fd"), 2.4, true)
+			draw_line(spoke.rotated(0.5) * (radius + 9.0), spoke.rotated(-0.5) * (radius + 9.0), Color("93c5fd"), 1.6, true)
 	if conductive_time > 0.0:
 		draw_arc(Vector2.ZERO, radius + 17.0, -1.0, 4.7, 18, Color("fde047"), 2.0)
 	if collapse_time > 0.0:

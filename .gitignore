@@ -22,3 +22,6 @@ desktop.ini
 work/sim_out.txt
 work/smoke_out.txt
 work/perf_out.txt
+
+# 冒烟测试输出
+work/smoke_final.txt

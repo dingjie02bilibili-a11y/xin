@@ -1,7 +1,7 @@
 extends Node
 
 const SAVE_PATH := "user://starfall_save.json"
-const CHARACTERS := ["游侠", "骑士", "星术师", "守卫", "影舞者", "星火使"]
+const CHARACTERS := ["游侠", "骑士", "魔法师", "守卫", "影舞者", "星火使"]
 # 战绩流水。它不提供任何属性加成——局外依旧只保留角色、成就与故事解锁——
 # 存在的唯一目的是给「难度心流」留一份证据：这位玩家实际打成什么样。
 # 只留最近 HISTORY_LIMIT 局，存档体积因此有上界。

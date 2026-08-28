@@ -24,7 +24,7 @@ func run_test() -> void:
 	for index in 200:
 		ordinary_income += game.roll_enemy_shard_reward(false, "追迹者")
 	assert(ordinary_income > 35 and ordinary_income < 90, "Ordinary enemy income is not probabilistic and controlled")
-	assert(game.roll_enemy_shard_reward(false, "重甲怪") == 2, "Elite shard reward changed unexpectedly")
+	assert(game.roll_enemy_shard_reward(false, "铁甲怪") == 2, "Elite shard reward changed unexpectedly")
 	assert(game.roll_enemy_shard_reward(true, "Boss") == 6, "First Boss shard reward is not controlled")
 
 	game.gain_star_shards(20)

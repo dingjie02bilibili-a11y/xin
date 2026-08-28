@@ -17,7 +17,7 @@ func run_test() -> void:
 	var pet = game.skill_entities["aura"]
 	pet.set_process(false)
 	pet.global_position = Vector2(1250, 0)
-	var boss = game.spawn_enemy("星渊追猎者", true)
+	var boss = game.spawn_enemy("赫巡·追赶者", true)
 	boss.set_physics_process(false)
 	boss.global_position = pet.global_position + Vector2(45, 0)
 	var boss_health: float = boss.health

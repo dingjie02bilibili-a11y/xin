@@ -45,7 +45,7 @@ func run_test() -> void:
 	game.close_shop()
 	# 货架基数会随开店次数增长（prepare_shop_goods 里的 mini(2, (shop_visit-1)/2)），
 	# 所以不能钉死数字——这里钉 4 是固定 3 格时代的遗留，第 3 次开店时基数已经是 4。
-	# 改成在同一个 shop_visit 下比「有没有杂耍货架」的差值，测的才是这张卡声称的 +1。
+	# 改成在同一个 shop_visit 下比「有没有多摆一件」的差值，测的才是这张卡声称的 +1。
 	equip(game, ["chain"])
 	game.shop_visit = 2
 	game.show_shop(true)
@@ -60,7 +60,7 @@ func run_test() -> void:
 		print("FAIL juggler 无卡%d 有卡%d" % [base_goods, game.shop_goods.size()]); quit(); return
 	game.close_shop()
 	equip(game, ["chain", "luchador"])
-	var boss = game.spawn_enemy("星渊追猎者", true)
+	var boss = game.spawn_enemy("赫巡·追赶者", true)
 	var test_affixes: Array[String] = ["rapid_pattern", "sealed_hand"]
 	boss.set_affixes(test_affixes)
 	game.apply_luchador_counter(boss)

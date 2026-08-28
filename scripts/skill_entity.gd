@@ -59,14 +59,14 @@ func _process(delta: float) -> void:
 	var desired := owner_player.global_position + leash_direction * (pet_leash_distance() + bob)
 	desired += pet_separation_offset()
 	# 充满能量却够不着目标时主动扑向最近的敌人，而不是干等在玩家身后。
-	# 玩家 260 移速永远甩得开 105 移速的追猎者，光环/卫星类宠物否则大半时间零输出。
+	# 玩家 260 移速永远甩得开 105 移速的追踪怪，光环/卫星类宠物否则大半时间零输出。
 	if cooldown_ratio() <= 0.02 and game.has_method("pet_hunt_target"):
 		var hunt: Vector2 = game.pet_hunt_target()
 		if hunt != Vector2.ZERO:
 			var anchor: Vector2 = owner_player.global_position
 			var lunge: Vector2 = hunt - anchor
 			if lunge.length() > 1.0:
-				desired = anchor + lunge.normalized() * minf(lunge.length(), 380.0)
+				desired = anchor + lunge.normalized() * minf(lunge.length(), float(game.pet_tether_range()))
 	# 链条被切断：宠物停摆，只以很慢的速度飘向玩家，等玩家走过来重新接上。
 	if not tether_connected():
 		var to_player: Vector2 = owner_player.global_position - global_position
@@ -83,6 +83,13 @@ func _process(delta: float) -> void:
 		var orbit_angle := life_time * (1.35 if control_state == "stolen" else -1.7) + formation_index * 1.9
 		desired = control_target.global_position + Vector2.from_angle(orbit_angle) * orbit_radius
 	move_as_follower(desired, delta)
+	# 绳子是硬的：宠物出不去这个圈。玩家跑开时它会被拽着走，
+	# 这正是绳子该有的手感，也让「绳长」这件事不需要任何文字说明。
+	var leash_limit: float = float(game.pet_tether_range())
+	var from_player: Vector2 = global_position - owner_player.global_position
+	if from_player.length() > leash_limit:
+		global_position = owner_player.global_position + from_player.normalized() * leash_limit
+		follow_velocity = follow_velocity.slide(from_player.normalized())
 	rotation = lerp_angle(rotation, aim_direction.angle(), minf(1.0, delta * 8.0))
 	queue_redraw()
 
@@ -195,16 +202,16 @@ func pet_name() -> String:
 	match skill_id:
 		"aura": return "暮环"
 		"orbit": return "环尾"
-		"satellite_engine": return "枢核"
+		"satellite_engine": return "蜂蜂"
 		"chain": return "弧牙"
 		"nova": return "爆星"
 		"phase_step": return "瞬影"
-		"thunder_orb": return "鸣霄"
-		"gravity_well": return "黯潮"
+		"thunder_orb": return "雷鸣"
+		"gravity_well": return "黑潮"
 		"blade_dance": return "刃舞"
 		"meteor_rain": return "坠火"
 		"aegis": return "星垒"
-		"execute": return "断罪"
+		"execute": return "黑羽"
 	return "星灵"
 
 func _draw() -> void:

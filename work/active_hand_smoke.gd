@@ -11,19 +11,19 @@ func run_test() -> void:
 	game.start_game_after_prologue()
 	await process_frame
 	# 有有效目标时，应由自动战斗生成攻击并进入结算冷却。
-	var enemy = game.spawn_enemy("追猎者")
+	var enemy = game.spawn_enemy("追踪怪")
 	enemy.global_position = game.player.global_position + Vector2(180, 0)
 	var pet_id: String = game.active_core_skill_ids()[0]
 	game.pet_energy[pet_id] = game.pet_energy_requirement(pet_id)
 	game._process(0.25)
-	# 供能已从「发射弹丸」改为「沿链条连续注入」，所以不再有飞行物，
+	# 充能已从「发射弹丸」改为「沿链条连续注入」，所以不再有飞行物，
 	# 而且同一帧内每只连着链条的宠物都会拿到能量，释放次数可能多于一次。
 	assert(game.hands_played >= 1, "Nearby target did not trigger automatic pet combat")
 	assert(float(game.pet_energy.get(pet_id, 0.0)) < game.pet_energy_requirement(pet_id), "Pet release did not consume stored energy")
 	assert(game.projectile_root.get_child_count() == 0, "Tether supply should not spawn flying bolts")
 
 	# 链条被切断后，宠物必须彻底停摆：既不接收能量，也不释放技能。
-	var cutter = game.spawn_enemy("重甲怪")
+	var cutter = game.spawn_enemy("铁甲怪")
 	game.cut_pet_tether(pet_id, cutter)
 	assert(not game.pet_link_connected(pet_id), "Tether did not register as cut")
 	game.pet_energy[pet_id] = game.pet_energy_requirement(pet_id)

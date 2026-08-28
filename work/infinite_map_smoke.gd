@@ -11,7 +11,7 @@ func run_test() -> void:
 	game.start_game_after_prologue()
 	await process_frame
 	game.player.position = Vector2(12000, -9000)
-	game.spawn_enemy("追猎者")
+	game.spawn_enemy("追踪怪")
 	var enemy = get_nodes_in_group("enemies")[-1]
 	# 刷新距离已随攻击范围一起收进可视范围（430~560）；本用例要验证的是
 	# 「围绕玩家刷新、不被世界边界钳制」，而不是某个具体距离。

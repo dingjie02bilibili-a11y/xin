@@ -15,7 +15,7 @@ const DT := 1.0 / 40.0
 const RUN_SECONDS := 470.0
 const CHAPTER_MARKS := [60.0, 120.0, 180.0, 240.0, 300.0, 470.0]
 const HistoryFixtures = preload("res://work/history_fixtures.gd")
-const ALL_CHARACTERS := ["游侠", "骑士", "星术师", "守卫", "影舞者", "星火使"]
+const ALL_CHARACTERS := ["游侠", "骑士", "魔法师", "守卫", "影舞者", "星火使"]
 
 var game
 var save
@@ -329,7 +329,7 @@ func drive_bot() -> void:
 		return
 	bot_phase += DT
 	var here: Vector2 = p.global_position
-	# 玩家 260 移速能永远甩掉 105 的追猎者，所以「无脑风筝」会让近战型宠物一次都打不中。
+	# 玩家 260 移速能永远甩掉 105 的追踪怪，所以「无脑风筝」会让近战型宠物一次都打不中。
 	# 真实玩家按自己宠物的射程控距：够不着就主动贴上去，贴太近才拉开。
 	var engage := 180.0
 	for id in game.active_core_skill_ids():
@@ -620,7 +620,7 @@ func summarise(character: String, runs: Array) -> Dictionary:
 	return summary
 
 func ttk_in_band(values: Array) -> bool:
-	# 单调递增不是真正的设计要求，而且构筑强度的方差比章节趋势还大。
+	# 单调递增不是真正的设计要求，而且搭配强度的方差比章节趋势还大。
 	# 真正要保证的是：每一关的 Boss 都打得像一场对峙——不是 3 秒融化，也不是耗着不死。
 	var seen := 0
 	for v in values:
@@ -668,7 +668,7 @@ func verdict(all: Array) -> void:
 		var late_damage: float = float(row.damage[3]) + float(row.damage[4]) + float(row.damage[5])
 		emit("%-5s 通关%s | 压力递增:%s | BossTTK在带内:%s | 开局可控:%s | 后期有压:%s | 通胀×%.1f" % [
 			row.character, "√" if row.deaths == 0 else "%d/%d" % [row.runs - row.deaths, row.runs],
-			# 压力可以体现为「场面更挤」或「掉血更多」，构筑清得干净时只会走后一条。
+			# 压力可以体现为「场面更挤」或「掉血更多」，搭配清得干净时只会走后一条。
 			"√" if (rising(row.alive) or rising(row.damage)) else "×",
 			"√" if ttk_in_band(row.ttk) else "×",
 			# 开局要的是「不失控」，不是绝对数量少：能稳住就行。

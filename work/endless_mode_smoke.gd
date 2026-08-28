@@ -66,7 +66,7 @@ func run_test() -> void:
 		# 直接手动放一只无尽 Boss，才能真正验证「Boss 在场时的刷怪压制」。
 		if elapsed > 90.0 and boss_spawned_manually == 0:
 			boss_spawned_manually = 1
-			var boss = game.spawn_enemy("星渊禁锢者", true)
+			var boss = game.spawn_enemy("弥垣·关门人", true)
 			boss.set_chapter_tier(7)
 			boss.health = 26000.0
 			boss.max_health = 26000.0

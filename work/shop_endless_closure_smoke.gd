@@ -59,11 +59,11 @@ func run_test() -> void:
 
 	game.close_shop()
 	game.endless_wave = 20
-	var wave20 = game.spawn_enemy("重甲怪")
+	var wave20 = game.spawn_enemy("铁甲怪")
 	var health20: float = wave20.max_health
 	wave20.queue_free()
 	game.endless_wave = 100
-	var wave100 = game.spawn_enemy("重甲怪")
+	var wave100 = game.spawn_enemy("铁甲怪")
 	var health100: float = wave100.max_health
 	assert(health100 / health20 > 1.45, "Late endless pressure flattened after player growth capped")
 	assert(health100 / health20 < 2.20, "Late endless pressure spikes too sharply between waves 20 and 100")

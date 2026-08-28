@@ -10,11 +10,11 @@ func run_test() -> void:
 	await process_frame
 	for upgrade in game.UPGRADES:
 		assert(game.make_skill_icon(upgrade.id) != null, "Skill icon failed: " + upgrade.id)
-	for character in ["游侠", "骑士", "星术师"]:
+	for character in ["游侠", "骑士", "魔法师"]:
 		assert(game.make_character_portrait(character) != null, "Portrait failed: " + character)
 	game.start_game_after_prologue()
 	await process_frame
-	game.spawn_enemy("追猎者")
+	game.spawn_enemy("追踪怪")
 	var pause_enemy = get_nodes_in_group("enemies")[-1]
 	pause_enemy.global_position = game.player.global_position
 	pause_enemy.take_damage(5.0)

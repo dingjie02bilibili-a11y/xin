@@ -14,7 +14,7 @@ func run_test() -> void:
 	root.add_child(game)
 	await process_frame
 	var hashes: Array[String] = []
-	for character in ["游侠", "骑士", "星术师", "守卫", "影舞者", "星火使"]:
+	for character in ["游侠", "骑士", "魔法师", "守卫", "影舞者", "星火使"]:
 		var icon: Texture2D = game.make_character_passive_icon(character)
 		assert(icon != null, "Passive icon failed to render: " + character)
 		var hash := image_hash(icon)

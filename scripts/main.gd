@@ -42,8 +42,12 @@ const SHOP_INTERVAL := 60.0
 const SHOP_ITEM_COUNT := 3
 const STARTING_CARD_SLOTS := 5
 const MAX_CARD_SLOTS := 7
+# 只有这五只宠物「画圈」，范围才会被放大（见 skill_area_multiplier）。
+# 其余宠物的卫星半径、闪电跳距、闪冲距离、黑羽索敌距离都是写死的常数，
+# 加范围的卡和宝物对它们没有作用——宠物说明里会照这份名单如实标注。
+const AREA_SCALING_PETS := ["aura", "nova", "thunder_orb", "gravity_well", "meteor_rain"]
 const MAX_RESONANCE := 100.0
-# 单次释放只抽取固定额度，多宠构筑不再互相抽干共鸣池
+# 单次释放只抽取固定额度，多宠搭配不再互相抽干气势池
 const RESONANCE_SPEND := 30.0
 const PHASE_STEP_COOLDOWN := 0.75
 const PHASE_STEP_INVULNERABILITY := 0.28
@@ -58,19 +62,23 @@ const BOSS_CLEAR_MAX_HEALTH := 18.0
 const BOSS_CLEAR_ARMOR := 1.0
 const BOSS_SHOP_LOCK_LIMIT := 30.0
 # 视口 1280x720、相机 zoom 1，所以从玩家出发竖直方向只能看到 360——这是紧的那一轴。
-# 过去坠火索敌 950、鸣霄 900，宠物在打玩家根本看不见的东西。所有索敌在这里统一夹紧，
+# 过去坠火索敌 950、雷鸣 900，宠物在打玩家根本看不见的东西。所有索敌在这里统一夹紧，
 # 任何新技能都不可能再飘出屏幕。
 const MAX_ENGAGE_RANGE := 360.0
+# 宠物被一条绳拴在玩家身上，跑不出这个半径。初始故意给得短：绳子松、会晃，
+# 一眼就看得出「它只能到这儿」；买「绳子加长」逐级放长，满级正好回到过去写死的 384。
+const BASE_TETHER_RANGE := 240.0
+const TETHER_RANGE_PER_LEVEL := 24.0
 const PET_DAMAGE_SCALE := 1.18
-# 供能链条：玩家与每只宠物之间是一条持续的能量通道，能量沿它连续流入。
+# 充能链条：玩家与每只宠物之间是一条持续的能量通道，能量沿它连续流入。
 # 敌人挤到玩家和宠物中间会把链条切断，宠物随即停摆，必须走过去重新接上。
 const TETHER_CUT_COOLDOWN := 3.0
 const TETHER_RECONNECT_GRACE := 1.5
 const TETHER_RECONNECT_RANGE := 44.0
 const TETHER_DRIFT_SPEED := 46.0
 const TETHER_SNAP_RECOIL := 165.0
-const ELITE_CUTTER_KINDS := ["重甲怪", "咒术师"]
-const TRAINING_CARD_IDS := ["damage", "cooldown", "speed", "health", "armor", "regen", "crit", "magnet"]
+const ELITE_CUTTER_KINDS := ["铁甲怪", "远射怪"]
+const TRAINING_CARD_IDS := ["damage", "cooldown", "speed", "health", "armor", "regen", "crit", "magnet", "leash"]
 const PET_ENERGY_REQUIREMENTS := {
 	"aura":0.9, "orbit":1.1, "satellite_engine":1.1, "chain":2.0,
 	"nova":3.0, "phase_step":2.2, "thunder_orb":2.8, "gravity_well":2.2,
@@ -80,7 +88,7 @@ const CHARACTER_UNLOCK_ACHIEVEMENTS := {
 	"游侠": "",
 	"骑士": "boss_breaker",
 	"守卫": "survive_three",
-	"星术师": "combo_adept",
+	"魔法师": "combo_adept",
 	"影舞者": "streak_master",
 	"星火使": "molten_master"
 }
@@ -97,253 +105,254 @@ const FORGE_ENERGY_CAP := 2.40
 const STARTING_PETS := {
 	"游侠": ["chain", "aura"],
 	"骑士": ["aura", "aegis"],
-	"星术师": ["aura", "thunder_orb"],
+	"魔法师": ["aura", "thunder_orb"],
 	"守卫": ["orbit", "gravity_well"],
 	"影舞者": ["blade_dance", "phase_step"],
 	"星火使": ["aura", "meteor_rain"]
 }
 const CORE_MASTERY_MAX_RANK := 5
 const CORE_MASTERY_RULES := {
-	"aura": {"condition":"单次光环命中至少4名敌人", "base":3, "gap":1.2, "bonus":"每阶伤害+8%、范围+4%"},
-	"orbit": {"condition":"单次轨道扫描命中至少3名敌人", "base":4, "gap":2.0, "bonus":"每阶伤害+8%；第3、5阶各增加1枚卫星"},
-	"satellite_engine": {"condition":"单次蜂巢扫描命中至少2名敌人", "base":4, "gap":2.0, "bonus":"每阶伤害+8%；第2、4阶各增加1枚卫星"},
-	"chain": {"condition":"一次磁暴电弧命中至少3个目标", "base":3, "gap":1.0, "bonus":"每阶伤害+8%；第2、4阶各增加1次跳跃"},
-	"nova": {"condition":"一次星核爆破命中至少4名敌人", "base":3, "gap":1.0, "bonus":"每阶伤害+8%、范围+4%"},
-	"phase_step": {"condition":"一次相位突进穿过至少2名敌人", "base":2, "gap":0.2, "bonus":"每阶伤害+8%、所需能量降低0.1"},
-	"thunder_orb": {"condition":"一次雷暴命中Boss、精英或至少3名敌人", "base":3, "gap":1.0, "bonus":"每阶伤害+8%、范围+4%"},
-	"gravity_well": {"condition":"一次引力奇点牵引至少5名敌人", "base":3, "gap":1.0, "bonus":"每阶伤害+8%、范围+5%、牵引力+10%"},
-	"blade_dance": {"condition":"单次星刃回环命中至少3名敌人", "base":4, "gap":1.6, "bonus":"每阶伤害+8%、回环半径+3"},
-	"meteor_rain": {"condition":"一次陨星坠落命中至少4名敌人", "base":3, "gap":1.0, "bonus":"每阶伤害+8%、范围+4%"},
-	"aegis": {"condition":"星辉壁垒成功抵消一次伤害", "base":2, "gap":0.1, "bonus":"每阶所需能量降低0.2；第5阶额外获得1层护盾"},
-	"execute": {"condition":"断罪成功处决一名敌人", "base":3, "gap":0.45, "bonus":"每阶处决线+1.5%、伤害+8%"}
+	"aura": {"condition":"一次光环打中至少4个敌人", "base":3, "gap":1.2, "bonus":"每升1级：伤害+8%、范围+4%"},
+	"orbit": {"condition":"一次卫星转圈扫到至少3个敌人", "base":4, "gap":2.0, "bonus":"每升1级：伤害+8%；第2、4级各多1颗卫星"},
+	"satellite_engine": {"condition":"一次卫星转圈扫到至少2个敌人", "base":4, "gap":2.0, "bonus":"每升1级：伤害+8%；第2、4级各多1颗卫星"},
+	"chain": {"condition":"一次闪电跳到至少3个敌人", "base":3, "gap":1.0, "bonus":"每升1级：伤害+8%；第2、4级闪电各多跳1次"},
+	"nova": {"condition":"一次爆炸波打中至少4个敌人", "base":3, "gap":1.0, "bonus":"每升1级：伤害+8%、范围+4%"},
+	"phase_step": {"condition":"一次闪冲撞到至少2个敌人", "base":2, "gap":0.2, "bonus":"每升1级：伤害+8%、要的能量少0.1"},
+	"thunder_orb": {"condition":"一次雷球砸到首领、铁甲怪、远射怪，或至少3个敌人", "base":3, "gap":1.0, "bonus":"每升1级：伤害+8%、范围+4%"},
+	"gravity_well": {"condition":"一次黑洞吸住至少5个敌人", "base":3, "gap":1.0, "bonus":"每升1级：伤害+8%、范围+5%、吸力+10%"},
+	"blade_dance": {"condition":"一次飞刀环切到至少3个敌人", "base":4, "gap":1.6, "bonus":"每升1级：伤害+8%、飞刀转得更远+4"},
+	"meteor_rain": {"condition":"一次陨石雨砸中至少4个敌人", "base":3, "gap":1.0, "bonus":"每升1级：伤害+8%、范围+4%"},
+	"aegis": {"condition":"护盾罩挡住一次伤害", "base":2, "gap":0.1, "bonus":"每升1级：要的能量少0.2；第5级多给1层护盾"},
+	"execute": {"condition":"黑羽补刀成功一次", "base":3, "gap":0.45, "bonus":"每升1级：能补刀的血线+1.5%、伤害+8%"}
 }
 const ENDLESS_CARD_IDS := ["endless_damage", "endless_vitality", "endless_haste"]
 const CARD_EDITIONS := [
-	{"id":"foil", "name":"闪箔", "desc":"该技能的伤害与状态强度提高15%"},
-	{"id":"holographic", "name":"镭射", "desc":"该技能暴击时额外提高25%伤害"},
-	{"id":"polychrome", "name":"多彩", "desc":"该技能最终伤害乘以1.20"},
-	{"id":"echo", "name":"回响", "desc":"技能释放后延迟0.28秒，在目标处复制一次55%威力的攻击波"}
+	{"id":"foil", "name":"闪光", "desc":"这只宠物的伤害和火烧、冰冻的效果都强15%"},
+	{"id":"holographic", "name":"激光", "desc":"这只宠物打出暴击时，伤害再多25%"},
+	{"id":"polychrome", "name":"彩色", "desc":"这只宠物的最终伤害×1.20"},
+	{"id":"echo", "name":"回声", "desc":"放完技能过0.28秒，在同一个地方再来一次，威力是55%"}
 ]
 const EXPEDITION_VOUCHERS := [
-	{"id":"wide_shelf", "name":"扩建货架", "desc":"每家商店额外展示1件商品", "price":12},
-	{"id":"free_reroll", "name":"批量采购", "desc":"每家商店第一次刷新免费", "price":9},
-	{"id":"salvage_license", "name":"星屑回收", "desc":"卡牌出售返还由50%提高到65%", "price":9},
-	{"id":"pet_insurance", "name":"宠物保险", "desc":"首次出售宠物时保留一半条件养成进度", "price":11},
-	{"id":"edition_license", "name":"版本许可", "desc":"版本改造商品价格降低2星屑", "price":9},
-	{"id":"rare_license", "name":"稀有许可", "desc":"史诗与传奇商品出现概率提高", "price":12},
-	{"id":"deep_freight", "name":"深层货运", "desc":"每家商店保证出现一个补充包", "price":10},
-	{"id":"counter_license", "name":"破咒执照", "desc":"Boss出现时有35%概率少获得一个词条", "price":12}
+	{"id":"wide_shelf", "name":"货架变大", "desc":"每家商店多摆1件商品", "price":12},
+	{"id":"free_reroll", "name":"免费换货", "desc":"每家商店第一次换货不要钱", "price":9},
+	{"id":"salvage_license", "name":"卖牌多退钱", "desc":"卖牌退回的星屑从一半变成65%", "price":9},
+	{"id":"pet_insurance", "name":"宠物保险", "desc":"第一次卖掉宠物时，它一半的熟练度会留着", "price":11},
+	{"id":"edition_license", "name":"改造打折", "desc":"改造宠物版本的商品便宜2星屑", "price":9},
+	{"id":"rare_license", "name":"好牌变多", "desc":"商店里更容易出现史诗和传奇好牌", "price":12},
+	{"id":"deep_freight", "name":"必出卡包", "desc":"每家商店一定会有一个卡包", "price":10},
+	{"id":"counter_license", "name":"少一个本领", "desc":"首领出现时，有35%机会少带一个本领", "price":12}
 ]
 const STAR_SIGILS := [
-	{"id":"swap", "name":"换位符", "desc":"交换卡组最左与最右卡牌"},
-	{"id":"polish", "name":"抛光符", "desc":"随机一只宠物获得闪箔或镭射版本"},
-	{"id":"melt", "name":"熔解符", "desc":"出售最右侧可出售的非宠物牌并获得双倍回收价"},
-	{"id":"cleanse", "name":"净化符", "desc":"部署一次净化屏障，抵消下一次Boss卡牌干扰"},
-	{"id":"sacrifice", "name":"献祭符", "desc":"最大生命-15，随机一只宠物立刻提升1星"},
-	{"id":"bridge", "name":"星桥符", "desc":"接下来3次宠物技能结算视为激活双核式"},
-	{"id":"fortune", "name":"守财符", "desc":"立即获得当前星屑20%的利息，最多8"},
-	{"id":"reforge", "name":"重铸符", "desc":"免费刷新当前商店商品"}
+	{"id":"swap", "name":"换位符", "desc":"把卡组最左边和最右边的两张牌换个位置"},
+	{"id":"polish", "name":"闪光符", "desc":"随机一只宠物变成闪光或激光版本"},
+	{"id":"melt", "name":"拆牌符", "desc":"卖掉最右边一张能卖的规则牌，退回双倍星屑"},
+	{"id":"cleanse", "name":"保护符", "desc":"放一个保护罩，挡掉首领的下一次捣乱（最多存2个）"},
+	{"id":"sacrifice", "name":"换力量符", "desc":"血-15，随机一只宠物的熟练度立刻升1级"},
+	{"id":"bridge", "name":"搭桥符", "desc":"接下来3次放技能，都算凑齐了「两只宠物」阵型"},
+	{"id":"fortune", "name":"存钱符", "desc":"马上按现在的星屑多拿20%，最多8"},
+	{"id":"reforge", "name":"换货符", "desc":"免费换一批商店商品"}
 ]
 const CARD_SEALS := [
-	{"id":"red", "name":"红蜡封", "desc":"该宠物每第5次技能结算使本次伤害规则额外强化20%"},
-	{"id":"blue", "name":"蓝蜡封", "desc":"击败Boss后使关联星式获得1次研究"},
-	{"id":"gold", "name":"金蜡封", "desc":"完成该卡条件养成时获得2星屑"},
-	{"id":"white", "name":"白蜡封", "desc":"从Boss干扰恢复时获得20共鸣"}
+	{"id":"red", "name":"红贴纸", "desc":"这只宠物每放第5次技能，那一次伤害再多20%"},
+	{"id":"blue", "name":"蓝贴纸", "desc":"打倒首领后，帮你练熟一个正在生效的阵型"},
+	{"id":"gold", "name":"金贴纸", "desc":"这张牌熟练度升级时，送你2星屑"},
+	{"id":"white", "name":"白贴纸", "desc":"被首领捣乱的牌恢复时，气势+20"}
 ]
 const CARD_RARITY_COLORS := {
 	"普通": Color("9bb4d1"), "稀有": Color("70d7ff"),
 	"史诗": Color("c084fc"), "传奇": Color("facc15"), "专属": Color("fb7185")
 }
 const DECK_COMBOS := [
-	{"name":"熔雷回路", "cards":["burn", "chain"]},
-	{"name":"星环矩阵", "cards":["aura", "orbit"]},
-	{"name":"极寒天火", "cards":["frost_brand", "meteor_rain"]},
-	{"name":"坍缩爆心", "cards":["gravity_well", "nova"]},
-	{"name":"瞬身刃舞", "cards":["phase_step", "blade_dance"]},
-	{"name":"风暴导体", "cards":["thunder_orb", "chain"]}
+	{"name":"火雷组合", "cards":["burn", "chain"]},
+	{"name":"卫星光环", "cards":["aura", "orbit"]},
+	{"name":"冰火组合", "cards":["frost_brand", "meteor_rain"]},
+	{"name":"聚怪爆炸", "cards":["gravity_well", "nova"]},
+	{"name":"闪冲飞刀", "cards":["phase_step", "blade_dance"]},
+	{"name":"雷电接力", "cards":["thunder_orb", "chain"]}
 ]
 const BOSS_AFFIXES := [
-	{"id":"rapid_pattern", "name":"急袭脉冲", "desc":"特殊行动更频繁、更具压迫感"},
-	{"id":"riftfield", "name":"裂隙蔓延", "desc":"周期生成可预警的小型陷阱"},
-	{"id":"exposed_core", "name":"暴露核心", "desc":"特殊行动频率+14%；行动后暴露2.2秒，受到伤害+75%"},
-	{"id":"prism_shield", "name":"棱镜屏障", "desc":"蓝盾期间供能弹仅提供50%能量；等待蓝盾结束可完整供能"},
-	{"id":"sealed_hand", "name":"封印契约", "desc":"周期封印一张非关键卡4.2秒；击败5名敌人可提前解除，结束后自动归还"},
-	{"id":"pet_thief", "name":"星渊窃宠", "desc":"周期偷走一只宠物5.2秒；靠近Boss身边的宠物可提前夺回，且不会夺走最后战力"},
-	{"id":"pet_charm", "name":"倒戈魅惑", "desc":"周期魅惑一只宠物4.5秒；靠近宠物可净化，且不会魅惑最后战力"},
-	{"id":"reverse_shuffle", "name":"逆序洗牌", "desc":"周期将卡牌结算顺序反转5.5秒；结束后完整恢复原顺序"}
+	{"id":"rapid_pattern", "name":"加速出招", "desc":"大招出得更勤，压迫感更强"},
+	{"id":"riftfield", "name":"地面陷阱", "desc":"隔一会儿在地上放小陷阱，会先给提示"},
+	{"id":"exposed_core", "name":"露出弱点", "desc":"大招间隔缩短14%；出完大招会露出破绽2.2秒，这段时间受到的伤害+75%"},
+	{"id":"prism_shield", "name":"蓝色护盾", "desc":"蓝盾亮着时，你的能量弹只有一半能量；等蓝盾消失再充能就不亏"},
+	{"id":"sealed_hand", "name":"封住卡牌", "desc":"隔一会儿封住一张不关键的牌4.2秒；打倒5个敌人能提前解开，时间到也会自动还你"},
+	{"id":"pet_thief", "name":"偷走宠物", "desc":"隔一会儿抢走一只宠物5.2秒；跑到被抢走的那只宠物旁边就能提前抢回来，也不会抢走你最后一只能打的宠物"},
+	{"id":"pet_charm", "name":"迷惑宠物", "desc":"隔一会儿迷惑一只宠物4.5秒，它会反过来朝你射击；跑到它旁边就能叫醒它，也不会迷惑你最后一只能打的宠物"},
+	{"id":"reverse_shuffle", "name":"卡牌倒转", "desc":"隔一会儿把卡牌的计算顺序倒过来5.5秒；结束后会完整恢复"}
 ]
 const ACHIEVEMENTS := [
-	{"id":"first_expedition", "name":"启程", "desc":"完成任意一次远征", "source":"结算一局游戏"},
-	{"id":"first_blood", "name":"第一滴星血", "desc":"在一局中击败第一个敌人", "source":"单局击败1名敌人"},
-	{"id":"fifty_fallen", "name":"清扫者", "desc":"在一局中击败50名敌人", "source":"单局击败50名敌人"},
-	{"id":"hundred_fallen", "name":"百敌斩", "desc":"在一局中击败100名敌人", "source":"单局击败100名敌人"},
-	{"id":"swarm_breaker", "name":"星潮粉碎者", "desc":"在一局中击败250名敌人", "source":"单局击败250名敌人"},
-	{"id":"level_five", "name":"第一桶星屑", "desc":"单局累计收集20星屑", "source":"累计获得20星屑"},
-	{"id":"level_ten", "name":"构筑资金", "desc":"单局累计收集50星屑", "source":"累计获得50星屑"},
-	{"id":"level_twenty", "name":"星屑商人", "desc":"单局累计收集120星屑", "source":"累计获得120星屑"},
-	{"id":"level_thirty", "name":"星渊财库", "desc":"单局累计收集250星屑", "source":"累计获得250星屑"},
-	{"id":"survive_minute", "name":"站稳脚跟", "desc":"生存1分钟", "source":"单局生存01:00"},
-	{"id":"survive_three", "name":"潮中砥柱", "desc":"生存3分钟，并解锁守卫", "source":"单局生存03:00"},
-	{"id":"survive_six", "name":"六分钟防线", "desc":"生存6分钟", "source":"单局生存06:00"},
-	{"id":"untouchable_minute", "name":"无伤序曲", "desc":"开局1分钟内不受伤", "source":"前01:00保持零受伤"},
-	{"id":"boss_breaker", "name":"首领终结者", "desc":"击败第一名Boss，并解锁骑士", "source":"单局首次击败Boss"},
-	{"id":"chaser_breaker", "name":"找回路线", "desc":"帮助赫巡摆脱故障指令", "source":"击败追击型Boss"},
-	{"id":"warden_breaker", "name":"打开城门", "desc":"帮助弥垣关闭失控陷阱", "source":"击败控场型Boss"},
-	{"id":"judge_breaker", "name":"新的答案", "desc":"提醒零号灯塔的真正任务", "source":"击败爆发型Boss"},
-	{"id":"boss_trio", "name":"三重破局", "desc":"在一局中击败3名Boss", "source":"单局Boss击败数达到3"},
-	{"id":"fourth_seal", "name":"第十三号路线", "desc":"让赫巡想起岚和新路线", "source":"单局击败4名Boss"},
-	{"id":"fifth_seal", "name":"有出口的新城", "desc":"帮助弥垣打开城市大门", "source":"单局击败5名Boss"},
-	{"id":"six_seals", "name":"灯塔重亮", "desc":"完成六关主线并修好灯塔", "source":"单局击败6名主线Boss"},
-	{"id":"flawless_boss", "name":"完美猎杀", "desc":"无伤击败一名Boss", "source":"Boss战期间不受伤"},
-	{"id":"last_stand_boss", "name":"绝境反杀", "desc":"低生命击败Boss", "source":"生命低于25%时击败Boss"},
-	{"id":"healthy_boss", "name":"毫发无损", "desc":"高生命击败Boss", "source":"生命高于95%时击败Boss"},
-	{"id":"first_relic", "name":"遗物持有者", "desc":"获得第一件Boss遗物", "source":"单局获得1件遗物"},
-	{"id":"relic_trinity", "name":"三圣遗珍", "desc":"在一局中持有3件Boss遗物", "source":"单局持有3件遗物"},
-	{"id":"relic_master", "name":"遗物博物馆", "desc":"在一局中集齐6种Boss遗物", "source":"单局持有6种遗物"},
+	{"id":"first_expedition", "name":"启程", "desc":"完成任意一次远征", "source":"打完一局"},
+	{"id":"first_blood", "name":"第一次胜利", "desc":"一局里击败第一个敌人", "source":"一局里击败1名敌人"},
+	{"id":"fifty_fallen", "name":"打败五十个", "desc":"一局里击败50名敌人", "source":"一局里击败50名敌人"},
+	{"id":"hundred_fallen", "name":"打败一百个", "desc":"一局里击败100名敌人", "source":"一局里击败100名敌人"},
+	{"id":"swarm_breaker", "name":"打败两百五十个", "desc":"一局里击败250名敌人", "source":"一局里击败250名敌人"},
+	{"id":"level_five", "name":"第一笔星屑", "desc":"一局里一共攒到20星屑", "source":"一局里一共拿到20星屑"},
+	{"id":"level_ten", "name":"买牌的本钱", "desc":"一局里一共攒到50星屑", "source":"一局里一共拿到50星屑"},
+	{"id":"level_twenty", "name":"星屑小老板", "desc":"一局里一共攒到120星屑", "source":"一局里一共拿到120星屑"},
+	{"id":"level_thirty", "name":"大富翁", "desc":"一局里一共攒到250星屑", "source":"一局里一共拿到250星屑"},
+	{"id":"survive_minute", "name":"坚持一分钟", "desc":"生存1分钟", "source":"一局里生存01:00"},
+	{"id":"survive_three", "name":"坚持三分钟", "desc":"生存3分钟，并解锁守卫", "source":"一局里生存03:00"},
+	{"id":"survive_six", "name":"坚持六分钟", "desc":"生存6分钟", "source":"一局里生存06:00"},
+	{"id":"untouchable_minute", "name":"开局不挨打", "desc":"开局1分钟内不受伤", "source":"前01:00保持零受伤"},
+	{"id":"boss_breaker", "name":"打倒第一个首领", "desc":"击败第一名首领，并解锁骑士", "source":"一局里首次击败首领"},
+	{"id":"chaser_breaker", "name":"找回路线", "desc":"帮助赫巡摆脱故障指令", "source":"击败会冲撞的首领"},
+	{"id":"warden_breaker", "name":"打开城门", "desc":"帮助弥垣关闭失控陷阱", "source":"击败会放陷阱的首领"},
+	{"id":"judge_breaker", "name":"新的答案", "desc":"提醒零号灯塔的真正任务", "source":"击败会放大招的首领"},
+	{"id":"boss_trio", "name":"打败三个首领", "desc":"一局里击败3名首领", "source":"一局里首领击败数达到3"},
+	{"id":"fourth_seal", "name":"新的路线", "desc":"让赫巡想起岚和新路线", "source":"一局里击败4名首领"},
+	{"id":"fifth_seal", "name":"有出口的新城", "desc":"帮助弥垣打开城市大门", "source":"一局里击败5名首领"},
+	{"id":"six_seals", "name":"灯塔重亮", "desc":"完成六关主线并修好灯塔", "source":"一局里击败6名主线首领"},
+	{"id":"flawless_boss", "name":"完美一战", "desc":"无伤击败一名首领", "source":"首领战期间不受伤"},
+	{"id":"last_stand_boss", "name":"残血翻盘", "desc":"低生命击败首领", "source":"生命低于25%时击败首领"},
+	{"id":"healthy_boss", "name":"一点没伤", "desc":"高生命击败首领", "source":"生命高于95%时击败首领"},
+	{"id":"first_relic", "name":"第一件宝物", "desc":"获得第一件首领宝物", "source":"一局里获得1件宝物"},
+	{"id":"relic_trinity", "name":"三件宝物", "desc":"一局里持有3件首领宝物", "source":"一局里持有3件宝物"},
+	{"id":"relic_master", "name":"六件宝物全收齐", "desc":"一局里集齐6种首领宝物", "source":"一局里持有6种宝物"},
 	{"id":"endless_walker", "name":"无尽行者", "desc":"踏入无尽挑战", "source":"完成主线第六关"},
-	{"id":"endless_three", "name":"无尽初潮", "desc":"抵达无尽第3波", "source":"无尽模式第3波"},
-	{"id":"endless_six", "name":"循环适应", "desc":"抵达无尽第6波", "source":"无尽模式第6波"},
-	{"id":"endless_nine", "name":"九重星潮", "desc":"抵达无尽第9波", "source":"无尽模式第9波"},
-	{"id":"endless_twelve", "name":"漫长守夜", "desc":"抵达无尽第12波", "source":"无尽模式第12波"},
-	{"id":"endless_fifteen", "name":"深渊常客", "desc":"抵达无尽第15波", "source":"无尽模式第15波"},
+	{"id":"endless_three", "name":"无尽第三波", "desc":"抵达无尽第3波", "source":"无尽模式第3波"},
+	{"id":"endless_six", "name":"无尽第六波", "desc":"抵达无尽第6波", "source":"无尽模式第6波"},
+	{"id":"endless_nine", "name":"无尽第九波", "desc":"抵达无尽第9波", "source":"无尽模式第9波"},
+	{"id":"endless_twelve", "name":"无尽第十二波", "desc":"抵达无尽第12波", "source":"无尽模式第12波"},
+	{"id":"endless_fifteen", "name":"无尽第十五波", "desc":"抵达无尽第15波", "source":"无尽模式第15波"},
 	{"id":"endless_twenty", "name":"没有终点", "desc":"抵达无尽第20波", "source":"无尽模式第20波"},
-	{"id":"combo_adept", "name":"共鸣学徒", "desc":"解锁任意武器进化，并解锁星术师", "source":"完成进化条件"},
-	{"id":"molten_master", "name":"熔雷掌控者", "desc":"进化熔雷回路，并解锁星火使", "source":"余烬弹头 + 磁暴线圈"},
-	{"id":"stellar_master", "name":"星环编织者", "desc":"进化星环矩阵", "source":"虚空光环 + 卫星系宠物"},
-	{"id":"combo_duet", "name":"双重共鸣", "desc":"同时激活2组卡牌联动", "source":"单局联动数达到2"},
-	{"id":"combo_quartet", "name":"组合大师", "desc":"同时激活4组卡牌联动", "source":"单局联动数达到4"},
-	{"id":"elemental_trinity", "name":"元素三相", "desc":"同时装配火、冰、雷卡牌", "source":"灼烧、寒霜、雷暴同时生效"},
-	{"id":"deck_full", "name":"满手好牌", "desc":"装满当前全部卡牌槽", "source":"至少5格且无空槽"},
-	{"id":"slot_six", "name":"额外口袋", "desc":"把卡牌槽扩展到6格", "source":"获得扩展卡匣"},
-	{"id":"slot_seven", "name":"七格卡匣", "desc":"把卡牌槽扩展到上限", "source":"卡牌槽达到7格"},
-	{"id":"deck_curator", "name":"卡组整理师", "desc":"完成第一次卡牌替换", "source":"满槽时换下一张卡牌"},
+	{"id":"combo_adept", "name":"组合入门", "desc":"组成任意一个进化组合，并解锁魔法师", "source":"完成进化条件"},
+	{"id":"molten_master", "name":"火雷高手", "desc":"进化火雷组合，并解锁星火使", "source":"火焰弹头 + 闪电链"},
+	{"id":"stellar_master", "name":"卫星高手", "desc":"进化卫星光环", "source":"光环圈 + 卫星系宠物"},
+	{"id":"combo_duet", "name":"两个组合", "desc":"同时凑齐2个卡牌组合", "source":"一局里同时有2个组合"},
+	{"id":"combo_quartet", "name":"组合大师", "desc":"同时凑齐4个卡牌组合", "source":"一局里同时有4个组合"},
+	{"id":"elemental_trinity", "name":"三种元素", "desc":"同时装配火、冰、雷卡牌", "source":"燃烧、冰冻、雷球同时生效"},
+	{"id":"deck_full", "name":"满手好牌", "desc":"装满当前全部卡牌槽", "source":"至少5个卡位并且全放满"},
+	{"id":"slot_six", "name":"额外口袋", "desc":"把卡位加到6个", "source":"获得加卡位"},
+	{"id":"slot_seven", "name":"七格卡匣", "desc":"把卡位加到最多", "source":"卡位到了7个"},
+	{"id":"deck_curator", "name":"卡组整理师", "desc":"完成第一次卡牌替换", "source":"卡位满了时换掉一张牌"},
 	{"id":"shop_first", "name":"第一笔交易", "desc":"在星屑商店购买一件商品", "source":"完成一次商店购买"},
 	{"id":"shop_reroll", "name":"货架重排", "desc":"刷新一次商店", "source":"支付星屑刷新商品"},
-	{"id":"shop_sale", "name":"断舍离", "desc":"出售一张卡牌", "source":"在商店出售卡牌"},
-	{"id":"shop_spree", "name":"星屑采购员", "desc":"单局累计消费30星屑", "source":"单局商店消费达到30星屑"},
-	{"id":"engine_master", "name":"引擎全开", "desc":"装备星律引擎，并拥有2只异版宠物", "source":"星律引擎生效时让2只宠物获得特殊版本"},
-	{"id":"catalyst_master", "name":"催化完成", "desc":"组合催化器同时增幅两组联动", "source":"持有催化器并激活2组联动"},
-	{"id":"core_max", "name":"异版王牌", "desc":"让任意宠物获得特殊版本", "source":"宠物获得闪箔、镭射、多彩或回响版本"},
-	{"id":"five_core", "name":"五核齐鸣", "desc":"同时装配5张卡牌", "source":"卡组达到5张"},
-	{"id":"glass_edge", "name":"玻璃锋刃", "desc":"选择玻璃超频", "source":"获得玻璃超频"},
-	{"id":"shattered_cannon", "name":"破碎巨炮", "desc":"让异版宠物受到玻璃超频增幅", "source":"把玻璃超频放在异版宠物右侧"},
-	{"id":"gamblers_oath", "name":"赌徒誓约", "desc":"选择赌命协议", "source":"获得赌命协议"},
-	{"id":"double_or_nothing", "name":"孤注一掷", "desc":"同时持有玻璃超频与赌命协议", "source":"两种高风险卡同时生效"},
-	{"id":"crit_half", "name":"宠物弱点猎手", "desc":"任一宠物暴击率达到50%", "source":"单局宠物暴击率达到50%"},
-	{"id":"crit_cap", "name":"宠物精准极限", "desc":"任一宠物暴击率达到上限85%", "source":"单局宠物暴击率达到85%"},
-	{"id":"last_stand", "name":"命悬一线", "desc":"生命降到20%以下仍存活", "source":"存活时生命低于20%"},
-	{"id":"streak_master", "name":"节拍大师", "desc":"触发一次连杀号令，并解锁影舞者", "source":"4秒内击败10名敌人"},
-	{"id":"phase_traveler", "name":"相位旅人", "desc":"首次使用相位突进", "source":"瞬影自动发动相位突进"},
-	{"id":"aegis_bearer", "name":"星辉护体", "desc":"获得星辉壁垒", "source":"购买星辉壁垒"},
-	{"id":"soul_master", "name":"灵魂牧者", "desc":"获得灵魂汲取", "source":"购买灵魂汲取"},
-	{"id":"meet_aura", "name":"暮光相逢", "desc":"首次让暮环加入队伍", "source":"获得暮环·虚空光环"},
-	{"id":"meet_orbit", "name":"环尾归队", "desc":"首次让环尾加入队伍", "source":"获得环尾·轨道卫星"},
-	{"id":"meet_satellite_engine", "name":"蜂巢点灯", "desc":"首次让枢核加入队伍", "source":"获得枢核·卫星引擎"},
-	{"id":"meet_chain", "name":"听见弧牙", "desc":"首次让弧牙加入队伍", "source":"获得弧牙·磁暴线圈"},
-	{"id":"meet_nova", "name":"第一声咆哮", "desc":"首次让爆星加入队伍", "source":"获得爆星·星核爆破"},
-	{"id":"meet_phase_step", "name":"闪光小狐", "desc":"首次让瞬影加入队伍", "source":"获得瞬影·相位突进"},
-	{"id":"meet_thunder_orb", "name":"猫头鹰的雷", "desc":"首次让鸣霄加入队伍", "source":"获得鸣霄·雷暴法球"},
-	{"id":"meet_gravity_well", "name":"黯潮靠近", "desc":"首次让黯潮加入队伍", "source":"获得黯潮·引力奇点"},
-	{"id":"meet_blade_dance", "name":"飞刃护卫", "desc":"首次让刃舞加入队伍", "source":"获得刃舞·星刃回环"},
-	{"id":"meet_meteor_rain", "name":"流星伙伴", "desc":"首次让坠火加入队伍", "source":"获得坠火·陨星坠落"},
-	{"id":"meet_aegis", "name":"星龟的盾", "desc":"首次让星垒加入队伍", "source":"获得星垒·星辉壁垒"},
-	{"id":"meet_execute", "name":"渡鸦观察员", "desc":"首次让断罪加入队伍", "source":"获得断罪·终结印记"},
-	{"id":"combo_frostfire", "name":"迟到但未失约", "desc":"首次激活极寒天火", "source":"寒霜印记与陨星坠落同时入组"},
-	{"id":"combo_collapse", "name":"恒星一生", "desc":"首次激活坍缩爆心", "source":"引力奇点与星核爆破同时入组"},
-	{"id":"combo_blade", "name":"门后的刀光", "desc":"首次激活瞬身刃舞", "source":"相位突进与星刃回环同时入组"},
-	{"id":"combo_storm", "name":"雷声抵达", "desc":"首次激活风暴导体", "source":"雷暴法球与磁暴线圈同时入组"},
-	{"id":"relic_predator_boots", "name":"旧航靴", "desc":"带回追猎者的步伐", "source":"Boss奖励选择追猎者的步伐"},
-	{"id":"relic_rift_compass", "name":"出口指针", "desc":"带回裂隙罗盘", "source":"Boss奖励选择裂隙罗盘"},
-	{"id":"relic_judge_spark", "name":"零点七秒", "desc":"带回裁决火花", "source":"Boss奖励选择裁决火花"},
-	{"id":"relic_ember_vessel", "name":"城市火种", "desc":"带回余烬容器", "source":"Boss奖励选择余烬容器"},
-	{"id":"relic_aegis_fragment", "name":"错误一侧", "desc":"带回壁垒碎片", "source":"Boss奖励选择壁垒碎片"},
-	{"id":"relic_storm_relay", "name":"风暴回信", "desc":"带回风暴继电器", "source":"Boss奖励选择风暴继电器"},
-	{"id":"affix_field", "name":"看清危险地面", "desc":"首次遭遇急袭或裂隙词条", "source":"遭遇急袭脉冲或裂隙蔓延"},
-	{"id":"affix_counter", "name":"抓住反击机会", "desc":"首次遭遇弱点或屏障词条", "source":"遭遇暴露核心或棱镜屏障"},
-	{"id":"affix_deck", "name":"救回休息卡", "desc":"首次遭遇封印契约", "source":"Boss携带封印契约"},
-	{"id":"affix_pet", "name":"宠物救援员", "desc":"首次遭遇窃宠或魅惑", "source":"Boss携带星渊窃宠或倒戈魅惑"},
-	{"id":"affix_shuffle", "name":"倒过来也能战斗", "desc":"首次遭遇逆序洗牌", "source":"Boss携带逆序洗牌"},
-	{"id":"achievement_ten", "name":"成就新秀", "desc":"累计解锁10项成就", "source":"成就墙达到10项"},
-	{"id":"seasoned", "name":"远征老兵", "desc":"累计解锁20项成就", "source":"成就墙达到20项"},
-	{"id":"archivist", "name":"星渊档案员", "desc":"累计解锁40项成就", "source":"成就墙达到40项"},
-	{"id":"achievement_fifty", "name":"传奇收藏家", "desc":"累计解锁50项成就", "source":"成就墙达到50项"},
+	{"id":"shop_sale", "name":"学会取舍", "desc":"出售一张卡牌", "source":"在商店出售卡牌"},
+	{"id":"shop_spree", "name":"买买买", "desc":"单局累计消费30星屑", "source":"一局里商店消费达到30星屑"},
+	{"id":"engine_master", "name":"引擎全开", "desc":"装备助推引擎，并拥有2只异版宠物", "source":"助推引擎生效时让2只宠物获得特殊版本"},
+	{"id":"catalyst_master", "name":"放大器全开", "desc":"组合放大器同时增幅两组联动", "source":"持有催化器并激活2组联动"},
+	{"id":"core_max", "name":"特殊版本", "desc":"让任意宠物获得特殊版本", "source":"宠物获得闪光、激光、彩色或回声版本"},
+	{"id":"five_core", "name":"五张卡牌", "desc":"同时装配5张卡牌", "source":"卡组达到5张"},
+	{"id":"glass_edge", "name":"玻璃冒险", "desc":"选择玻璃大炮", "source":"获得玻璃大炮"},
+	{"id":"shattered_cannon", "name":"玻璃加成", "desc":"让异版宠物受到玻璃大炮增幅", "source":"把玻璃大炮放在异版宠物右侧"},
+	{"id":"gamblers_oath", "name":"拼命约定", "desc":"选择拼命一击", "source":"获得拼命一击"},
+	{"id":"double_or_nothing", "name":"双重冒险", "desc":"同时持有玻璃大炮与拼命一击", "source":"两种高风险卡同时生效"},
+	{"id":"crit_half", "name":"暴击一半", "desc":"任一宠物暴击率达到50%", "source":"一局里宠物暴击率达到50%"},
+	{"id":"crit_cap", "name":"暴击封顶", "desc":"有宠物的暴击率到了最高的85%", "source":"一局里宠物暴击率达到85%"},
+	{"id":"last_stand", "name":"只剩一点血", "desc":"生命降到20%以下仍存活", "source":"存活时生命低于20%"},
+	{"id":"streak_master", "name":"连杀高手", "desc":"触发一次连杀奖励，并解锁影舞者", "source":"连着打倒10个敌人，每两次不超过4秒"},
+	{"id":"phase_traveler", "name":"第一次闪冲", "desc":"首次使用闪冲", "source":"瞬影自动发动闪冲"},
+	{"id":"aegis_bearer", "name":"得到护盾", "desc":"获得护盾罩", "source":"购买护盾罩"},
+	{"id":"soul_master", "name":"得到回血", "desc":"获得击杀回血", "source":"购买击杀回血"},
+	{"id":"meet_aura", "name":"遇见暮环", "desc":"首次让暮环加入队伍", "source":"获得暮环·光环圈"},
+	{"id":"meet_orbit", "name":"遇见环尾", "desc":"首次让环尾加入队伍", "source":"获得环尾·绕圈卫星"},
+	{"id":"meet_satellite_engine", "name":"遇见蜂蜂", "desc":"首次让蜂蜂加入队伍", "source":"获得蜂蜂·卫星工厂"},
+	{"id":"meet_chain", "name":"遇见弧牙", "desc":"首次让弧牙加入队伍", "source":"获得弧牙·闪电链"},
+	{"id":"meet_nova", "name":"遇见爆星", "desc":"首次让爆星加入队伍", "source":"获得爆星·爆炸波"},
+	{"id":"meet_phase_step", "name":"遇见瞬影", "desc":"首次让瞬影加入队伍", "source":"获得瞬影·闪冲"},
+	{"id":"meet_thunder_orb", "name":"遇见雷鸣", "desc":"首次让雷鸣加入队伍", "source":"获得雷鸣·雷球"},
+	{"id":"meet_gravity_well", "name":"遇见黑潮", "desc":"首次让黑潮加入队伍", "source":"获得黑潮·吸怪黑洞"},
+	{"id":"meet_blade_dance", "name":"遇见刃舞", "desc":"首次让刃舞加入队伍", "source":"获得刃舞·飞刀环"},
+	{"id":"meet_meteor_rain", "name":"遇见坠火", "desc":"首次让坠火加入队伍", "source":"获得坠火·陨石雨"},
+	{"id":"meet_aegis", "name":"遇见星垒", "desc":"首次让星垒加入队伍", "source":"获得星垒·护盾罩"},
+	{"id":"meet_execute", "name":"遇见黑羽", "desc":"首次让黑羽加入队伍", "source":"获得黑羽·补刀印记"},
+	{"id":"combo_frostfire", "name":"第一次冰火组合", "desc":"首次激活冰火组合", "source":"冰冻印记与陨石雨同时入组"},
+	{"id":"combo_collapse", "name":"第一次聚怪爆炸", "desc":"首次激活聚怪爆炸", "source":"吸怪黑洞与爆炸波同时入组"},
+	{"id":"combo_blade", "name":"第一次闪冲飞刀", "desc":"首次激活闪冲飞刀", "source":"闪冲与飞刀环同时入组"},
+	{"id":"combo_storm", "name":"第一次雷电接力", "desc":"首次激活雷电接力", "source":"雷球与闪电链同时入组"},
+	{"id":"relic_predator_boots", "name":"带回靴子", "desc":"带回飞毛腿靴子", "source":"首领奖励选择飞毛腿靴子"},
+	{"id":"relic_rift_compass", "name":"带回罗盘", "desc":"带回指路罗盘", "source":"首领奖励选择指路罗盘"},
+	{"id":"relic_judge_spark", "name":"带回火花", "desc":"带回暴击火花", "source":"首领奖励选择暴击火花"},
+	{"id":"relic_ember_vessel", "name":"带回火种", "desc":"带回火种罐子", "source":"首领奖励选择火种罐子"},
+	{"id":"relic_aegis_fragment", "name":"带回碎片", "desc":"带回护盾碎片", "source":"首领奖励选择护盾碎片"},
+	{"id":"relic_storm_relay", "name":"带回电话", "desc":"带回雷电电话", "source":"首领奖励选择雷电电话"},
+	{"id":"affix_field", "name":"见到地面本领", "desc":"第一次遇到加速出招或地面陷阱", "source":"遇到加速出招或地面陷阱"},
+	{"id":"affix_counter", "name":"见到弱点本领", "desc":"第一次遇到露出弱点或蓝色护盾", "source":"遇到露出弱点或蓝色护盾"},
+	{"id":"affix_deck", "name":"见到封牌本领", "desc":"第一次遇到封住卡牌", "source":"首领携带封住卡牌"},
+	{"id":"affix_pet", "name":"见到抢宠本领", "desc":"第一次遇到偷走宠物或迷惑宠物", "source":"首领携带偷走宠物或迷惑宠物"},
+	{"id":"affix_shuffle", "name":"见到倒转本领", "desc":"第一次遇到卡牌倒转", "source":"首领携带卡牌倒转"},
+	{"id":"achievement_ten", "name":"成就新秀", "desc":"一共解锁10个成就", "source":"成就墙达到10项"},
+	{"id":"seasoned", "name":"远征老兵", "desc":"一共解锁20个成就", "source":"成就墙达到20项"},
+	{"id":"archivist", "name":"收集四十个", "desc":"一共解锁40个成就", "source":"成就墙达到40项"},
+	{"id":"achievement_fifty", "name":"收集五十个", "desc":"一共解锁50个成就", "source":"成就墙达到50项"},
 	{"id":"ranger_journey", "name":"疾风启程", "desc":"使用游侠开始远征", "source":"选择游侠进入一局"},
 	{"id":"knight_journey", "name":"圣壁启程", "desc":"使用骑士开始远征", "source":"选择骑士进入一局"},
-	{"id":"mage_journey", "name":"双星启程", "desc":"使用星术师开始远征", "source":"选择星术师进入一局"},
+	{"id":"mage_journey", "name":"双星启程", "desc":"使用魔法师开始远征", "source":"选择魔法师进入一局"},
 	{"id":"guardian_journey", "name":"堡垒启程", "desc":"使用守卫开始远征", "source":"选择守卫进入一局"},
 	{"id":"dancer_journey", "name":"暗影启程", "desc":"使用影舞者开始远征", "source":"选择影舞者进入一局"},
-	{"id":"fire_journey", "name":"余烬启程", "desc":"使用星火使开始远征", "source":"选择星火使进入一局"}
+	{"id":"fire_journey", "name":"火种启程", "desc":"使用星火使开始远征", "source":"选择星火使进入一局"}
 ]
 const BOSS_RELICS := [
-	{"id":"predator_boots", "name":"追猎者的步伐", "type":"角色遗物", "desc":"每级：角色移速+12%；基础供能间隔-8%", "icon":"➤"},
-	{"id":"aegis_fragment", "name":"壁垒碎片", "type":"角色遗物", "desc":"每级：最大生命+12、护甲+1；立刻获得1层护盾", "icon":"⬢"},
-	{"id":"rift_compass", "name":"裂隙罗盘", "type":"宠物遗物", "desc":"每级：全部宠物范围+15%；黯潮引力范围再+35%", "icon":"◎"},
-	{"id":"judge_spark", "name":"裁决火花", "type":"宠物遗物", "desc":"每级：全部宠物暴击+10%；宠物暴击伤害+20%", "icon":"!"},
-	{"id":"ember_vessel", "name":"余烬容器", "type":"宠物遗物", "desc":"每级强化宠物命中的灼烧；灼烧敌人倒下时小范围爆燃", "icon":"♨"},
-	{"id":"storm_relay", "name":"风暴继电器", "type":"宠物遗物", "desc":"每级：弧牙多跳2次；鸣霄雷暴范围+25%", "icon":"⚡"}
+	{"id":"predator_boots", "name":"飞毛腿靴子", "type":"给你自己的宝物", "desc":"每升1级：跑得快12%，发能量弹的间隔短8%", "icon":"➤"},
+	{"id":"aegis_fragment", "name":"护盾碎片", "type":"给你自己的宝物", "desc":"每升1级：血+12、护甲+1，并马上给1层护盾", "icon":"⬢"},
+	{"id":"rift_compass", "name":"指路罗盘", "type":"给宠物的宝物", "desc":"每升1级：画圈的技能范围+15%；黑潮的吸力范围再+35%", "icon":"◎"},
+	{"id":"judge_spark", "name":"暴击火花", "type":"给宠物的宝物", "desc":"每升1级：所有宠物暴击+10%，暴击时的伤害倍数再+0.2", "icon":"!"},
+	{"id":"ember_vessel", "name":"火种罐子", "type":"给宠物的宝物", "desc":"每升1级：宠物点的火烧得更旺；着火的敌人倒下时会小小地炸一下", "icon":"♨"},
+	{"id":"storm_relay", "name":"雷电电话", "type":"给宠物的宝物", "desc":"每升1级：弧牙的闪电多跳2次，雷鸣的雷球范围+25%", "icon":"⚡"}
 ]
 const UPGRADES := [
-	{"id":"damage", "name":"能量压缩训练", "desc":"立即提高每枚供能弹的能量；游侠与星火使收益更高", "max":8, "icon":"◆"},
-	{"id":"cooldown", "name":"供能校准训练", "desc":"立即缩短基础供能间隔；星术师收益更高", "max":8, "icon":"◴"},
-	{"id":"speed", "name":"步法训练", "desc":"立即提高基础移动速度；影舞者收益更高", "max":8, "icon":"➤"},
-	{"id":"health", "name":"体魄训练", "desc":"立即提高最大生命；骑士与守卫收益更高", "max":8, "icon":"♥"},
-	{"id":"armor", "name":"星钢淬体", "desc":"立即提高基础护甲；骑士收益更高", "max":6, "icon":"⬢"},
-	{"id":"regen", "name":"静息训练", "desc":"立即提高基础生命恢复；守卫收益更高", "max":6, "icon":"✚"},
-	{"id":"projectile", "name":"群敌分裂棱镜", "desc":"密集敌群中：位于宠物左侧提供6%加算，右侧提供5%乘算", "max":1, "icon":"✦"},
-	{"id":"pierce", "name":"密阵穿透射线", "desc":"密集敌群中：位于宠物左侧提供6%加算，右侧提供5%乘算", "max":1, "icon":"⇥"},
-	{"id":"area", "name":"拥挤空间扩张", "desc":"宠物附近至少2名敌人时，使该技能范围+12%", "max":1, "icon":"◎"},
-	{"id":"crit", "name":"宠物弱点训练", "desc":"立即提高全部宠物基础暴击率与幸运；影舞者暴击收益更高", "max":8, "icon":"!"},
-	{"id":"magnet", "name":"引力校准训练", "desc":"立即提高基础拾取范围", "max":6, "icon":"∩"},
-	{"id":"aura", "name":"暮环·虚空光环", "desc":"召唤虚空水母暮环，持续伤害周围敌人；配合卫星宠物进化星环矩阵", "max":1, "icon":"◉"},
-	{"id":"orbit", "name":"环尾·轨道卫星", "desc":"召唤星轨狐环尾，释放并增加环绕卫星", "max":1, "icon":"☄"},
-	{"id":"chain", "name":"弧牙·磁暴线圈", "desc":"自动释放连锁电弧，最多弹跳多个目标", "max":1, "icon":"⚡"},
-	{"id":"nova", "name":"爆星·星核爆破", "desc":"召唤星核幼狮爆星，周期咆哮并释放近身新星冲击", "max":1, "icon":"✹"},
-	{"id":"homing", "name":"追踪星瞳", "desc":"作为技能改造参与邻接牌型；位于宠物右侧时伤害+4%", "max":1, "icon":"◌"},
-	{"id":"burn", "name":"余烬弹头", "desc":"宠物命中附加持续灼烧；配合磁暴线圈进化熔雷回路", "max":1, "icon":"♨"},
-	{"id":"satellite_engine", "name":"枢核·卫星引擎", "desc":"召唤机械蜂巢精灵枢核，生产并强化卫星；可组成星环矩阵", "max":1, "icon":"☄"},
-	{"id":"glass", "name":"玻璃超频", "desc":"最大生命-20；放在宠物之后时，使该宠物伤害×1.40", "max":1, "icon":"◇"},
-	{"id":"gamble", "name":"赌命协议", "desc":"护甲-2；放在宠物之后时，为该宠物增加25%暴击率", "max":1, "icon":"!"},
-	{"id":"momentum", "name":"连杀号令", "desc":"4秒内击败10名敌人：恢复8生命，接下来2枚供能弹能量+50%", "max":1, "icon":"✹"},
-	{"id":"ranger_focus", "name":"游侠·弧牙共振", "desc":"专属：磁暴线圈强度+1级，连锁次数与伤害提高", "max":1, "icon":"➤", "character":"游侠"},
-	{"id":"knight_bulwark", "name":"骑士·圣壁光环", "desc":"专属：光环半径+32，护甲+2", "max":1, "icon":"⬢", "character":"骑士"},
-	{"id":"mage_prism", "name":"星术师·双星导流", "desc":"专属：虚空光环范围+20，所需能量-20%", "max":1, "icon":"◌", "character":"星术师"},
-	{"id":"guardian_bastion", "name":"守卫·堡垒编队", "desc":"专属：卫星+2，最大生命+18", "max":1, "icon":"☄", "character":"守卫"},
-	{"id":"dancer_execution", "name":"影舞者·收割节拍", "desc":"专属：全部宠物暴击+12%，解锁连杀号令", "max":1, "icon":"!", "character":"影舞者"},
-	{"id":"fire_rite", "name":"星火使·余烬仪式", "desc":"专属：光环命中附加灼烧，范围+12%", "max":1, "icon":"♨", "character":"星火使"},
-	{"id":"phase_step", "name":"瞬影·相位突进", "desc":"自动冲向附近敌群，沿途造成伤害并短暂无敌", "max":1, "icon":"➤"},
-	{"id":"thunder_orb", "name":"鸣霄·雷暴法球", "desc":"召唤风暴猫头鹰鸣霄，周期锁定精英与Boss投下雷暴法球", "max":1, "icon":"⚡"},
-	{"id":"frost_brand", "name":"寒霜印记", "desc":"宠物命中使敌人短暂减速；对Boss也有效", "max":1, "icon":"❄"},
-	{"id":"soul_siphon", "name":"灵魂汲取", "desc":"击败敌人有8%概率回复3生命", "max":1, "icon":"✚"},
-	{"id":"gravity_well", "name":"黯潮·引力奇点", "desc":"召唤黑洞蝠鲼黯潮，周期制造牵引场把附近敌人拉向中心并造成范围伤害", "max":1, "icon":"◎"},
-	{"id":"blade_dance", "name":"刃舞·星刃回环", "desc":"召唤星刃螳螂刃舞，释放高速旋转星刃贴身持续切割", "max":1, "icon":"☄"},
-	{"id":"meteor_rain", "name":"坠火·陨星坠落", "desc":"召唤陨星幼龙坠火，周期锁定敌群降下范围陨星", "max":1, "icon":"✹"},
-	{"id":"aegis", "name":"星垒·星辉壁垒", "desc":"召唤晶甲星龟星垒，周期展开护盾抵消下一次伤害", "max":1, "icon":"⬢"},
-	{"id":"execute", "name":"断罪·终结印记", "desc":"召唤裁决渡鸦断罪，处决生命低于20%的非Boss敌人", "max":1, "icon":"!"},
-	{"id":"card_slot", "name":"扩展卡匣", "desc":"占用1格，直接启用第6与第7卡牌槽；卡组超过5张时不可移除", "max":1, "icon":"▣"},
-	{"id":"core_engine", "name":"星律引擎", "desc":"放在宠物之前：按卡组数量为该宠物追加基础伤害，最高+30%；不增加宠物能量", "max":1, "icon":"◆"},
-	{"id":"combo_catalyst", "name":"组合催化器", "desc":"放在宠物之后：按已激活联动数量乘算该宠物伤害，最高×1.30", "max":1, "icon":"✦"},
-	{"id":"empty_stencil", "name":"留白星律", "desc":"放在宠物之后：每个空卡槽使该宠物本次伤害×1.10", "max":1, "icon":"□"},
-	{"id":"loyalty_cycle", "name":"第六契约", "desc":"放在宠物之后：该宠物每第6次有效伤害结算×2.20", "max":1, "icon":"⑥"},
-	{"id":"misprint", "name":"故障刻印", "desc":"放在宠物之后：该宠物每次伤害在×0.85～×1.35之间波动", "max":1, "icon":"?"},
-	{"id":"pair_protocol", "name":"同律双生", "desc":"放在宠物之后：存在两张同构筑标签牌时该宠物伤害×1.15", "max":1, "icon":"Ⅱ"},
-	{"id":"trio_protocol", "name":"三相合唱", "desc":"放在宠物之后：存在三张同构筑标签牌时该宠物伤害×1.25", "max":1, "icon":"Ⅲ"},
-	{"id":"sequence_protocol", "name":"顺序回路", "desc":"放在宠物左侧第3格：它、后续两张牌与该宠物组成连续四牌，追加20%基础伤害", "max":1, "icon":"↠"},
-	{"id":"four_elements", "name":"四象花庭", "desc":"放在宠物之后：同时持有灼烧、寒霜、雷霆与虚空牌时伤害×1.45", "max":1, "icon":"✤"},
-	{"id":"hanging_echo", "name":"首位回响", "desc":"紧邻宠物右侧时，重演其首次伤害判定并使伤害×1.22", "max":1, "icon":"↻"},
-	{"id":"blueprint", "name":"蓝图投影", "desc":"放在宠物之后：复制右邻非复制牌的伤害规则", "max":1, "icon":"▧"},
-	{"id":"brainstorm", "name":"首因风暴", "desc":"放在宠物之后：复制卡组最左侧非复制牌的伤害规则", "max":1, "icon":"⌁"},
-	{"id":"red_contract", "name":"拒选红契", "desc":"持有它且整家商店不购物时永久成长；每层使所有宠物伤害×1.05，最多6层", "max":1, "icon":"R"},
-	{"id":"green_momentum", "name":"无伤绿律", "desc":"连续击杀且不受伤时成长；每层伤害+4%，受击清空，最多10层", "max":1, "icon":"G"},
-	{"id":"campfire", "name":"焚牌营火", "desc":"出售或替换卡牌时成长；每层伤害×1.08，击败Boss后清空，最多6层", "max":1, "icon":"♨"},
-	{"id":"bull_reserve", "name":"星屑公牛", "desc":"放在宠物之后：每持有10星屑追加5%基础伤害，最多25%", "max":1, "icon":"◆"},
-	{"id":"low_deck", "name":"侵蚀留白", "desc":"少于5张卡时，每少一张使伤害×1.12", "max":1, "icon":"▽"},
-	{"id":"lucky_doubler", "name":"六面偏差", "desc":"放在宠物之后：33%概率使本次伤害×1.50，概率受幸运加成但上限80%", "max":1, "icon":"⚄"},
-	{"id":"boss_matador", "name":"斗牛反证", "desc":"Boss特殊行动后的暴露窗口中，伤害×1.50", "max":1, "icon":"⚑"},
-	{"id":"luchador", "name":"破咒面具", "desc":"下一场Boss出现时献祭自身，永久取消该Boss随机一个词条", "max":1, "icon":"◈"},
-	{"id":"juggler", "name":"杂耍货架", "desc":"商店额外展示1件商品；本卡仍占用1个卡槽", "max":1, "icon":"✥"},
-	{"id":"astronomer", "name":"星图学者", "desc":"放在宠物之后：至少激活1组卡牌联动时伤害×1.12", "max":1, "icon":"✧"},
-	{"id":"rocket", "name":"远征火箭", "desc":"击败Boss时额外获得星屑，奖励随本局Boss击杀数平滑增长", "max":1, "icon":"➤"},
-	{"id":"moon_interest", "name":"月息账户", "desc":"离开商店时按现有星屑获得10%利息，每次最多5星屑", "max":1, "icon":"☾"}
+	{"id":"damage", "name":"力气训练", "desc":"每一发能量弹更有力；游侠和星火使学得更快", "max":8, "icon":"◆"},
+	{"id":"cooldown", "name":"手速训练", "desc":"发能量弹的间隔更短；魔法师学得更快", "max":8, "icon":"◴"},
+	{"id":"speed", "name":"跑步训练", "desc":"跑得更快；影舞者学得更快", "max":8, "icon":"➤"},
+	{"id":"health", "name":"身体训练", "desc":"血更多；骑士和守卫学得更快", "max":8, "icon":"♥"},
+	{"id":"armor", "name":"护甲训练", "desc":"护甲更厚，挨打没那么疼；骑士学得更快", "max":6, "icon":"⬢"},
+	{"id":"regen", "name":"回血训练", "desc":"自己慢慢回血；守卫学得更快", "max":6, "icon":"✚"},
+	{"id":"projectile", "name":"分光镜", "desc":"敌人挤成一堆时：放在宠物左边给它加6%力气，放在右边让伤害多5%。和穿透镜效果一样，可以一起用", "max":1, "icon":"✦"},
+	{"id":"pierce", "name":"穿透镜", "desc":"敌人挤成一堆时：放在宠物左边给它加6%力气，放在右边让伤害多5%。和分光镜效果一样，可以一起用", "max":1, "icon":"⇥"},
+	{"id":"area", "name":"人多变大", "desc":"宠物周围有2个以上敌人时，画圈的技能范围变大12%", "max":1, "icon":"◎"},
+	{"id":"crit", "name":"暴击训练", "desc":"所有宠物更容易打出暴击，运气也更好；影舞者学得更快", "max":8, "icon":"!"},
+	{"id":"magnet", "name":"捡星屑训练", "desc":"离得更远也能把星屑吸过来", "max":6, "icon":"∩"},
+	{"id":"leash", "name":"绳子加长", "desc":"宠物身上的绳子放长一点，它能跑得更远去打敌人", "max":6, "icon":"∿"},
+	{"id":"aura", "name":"暮环·光环圈", "desc":"召唤星空水母暮环，不停伤害身边的敌人。再带一只卫星宠物就能组成卫星光环", "max":1, "icon":"◉"},
+	{"id":"orbit", "name":"环尾·绕圈卫星", "desc":"召唤星轨狐环尾，让卫星绕着圈打人", "max":1, "icon":"☄"},
+	{"id":"chain", "name":"弧牙·闪电链", "desc":"召唤雷电鳗龙弧牙，闪电会在敌人之间一个接一个地跳", "max":1, "icon":"⚡"},
+	{"id":"nova", "name":"爆星·爆炸波", "desc":"召唤星核幼狮爆星，吼一声把身边的敌人炸开", "max":1, "icon":"✹"},
+	{"id":"homing", "name":"追踪眼", "desc":"算改造牌，挨着宠物能凑阵型；放在宠物右边让它伤害多4%", "max":1, "icon":"◌"},
+	{"id":"burn", "name":"火焰弹头", "desc":"宠物打中敌人会点着火，一直烧。再带弧牙就能组成火雷组合", "max":1, "icon":"♨"},
+	{"id":"satellite_engine", "name":"蜂蜂·卫星工厂", "desc":"召唤机械蜂巢精灵蜂蜂，让卫星再多一颗、打得更疼。配上暮环就能组成卫星光环", "max":1, "icon":"☄"},
+	{"id":"glass", "name":"玻璃大炮", "desc":"血-20，让它伤害×1.40", "max":1, "icon":"◇"},
+	{"id":"gamble", "name":"拼命一击", "desc":"护甲-2，让它暴击率+25%", "max":1, "icon":"!"},
+	{"id":"momentum", "name":"连杀奖励", "desc":"一口气连打倒10个敌人：回8点血，接下来2发能量弹更足", "max":1, "icon":"✹"},
+	{"id":"ranger_focus", "name":"游侠·弧牙加强", "desc":"专属：弧牙的闪电多一级，跳得更多、打得更疼", "max":1, "icon":"➤", "character":"游侠"},
+	{"id":"knight_bulwark", "name":"骑士·大光环", "desc":"专属：光环变大32，护甲+2", "max":1, "icon":"⬢", "character":"骑士"},
+	{"id":"mage_prism", "name":"魔法师·省电光环", "desc":"专属：光环圈变大20，要的能量少20%", "max":1, "icon":"◌", "character":"魔法师"},
+	{"id":"guardian_bastion", "name":"守卫·卫星小队", "desc":"专属：卫星多2颗，血+18", "max":1, "icon":"☄", "character":"守卫"},
+	{"id":"dancer_execution", "name":"影舞者·连杀节拍", "desc":"专属：所有宠物暴击+12%，并直接获得连杀奖励", "max":1, "icon":"!", "character":"影舞者"},
+	{"id":"fire_rite", "name":"星火使·点火光环", "desc":"专属：光环打中敌人会点火，范围变大12%", "max":1, "icon":"♨", "character":"星火使"},
+	{"id":"phase_step", "name":"瞬影·闪冲", "desc":"召唤裂缝狐瞬影，带你朝按住的方向冲一段，撞伤路上的敌人，冲的时候不会受伤", "max":1, "icon":"➤"},
+	{"id":"thunder_orb", "name":"雷鸣·雷球", "desc":"召唤风暴猫头鹰雷鸣，有首领就先砸首领，没有就砸最近的敌人", "max":1, "icon":"⚡"},
+	{"id":"frost_brand", "name":"冰冻印记", "desc":"宠物打中敌人会让它变慢，对首领也管用，只是慢得少一些", "max":1, "icon":"❄"},
+	{"id":"soul_siphon", "name":"击杀回血", "desc":"每打倒一个敌人，有8%机会回3点血", "max":1, "icon":"✚"},
+	{"id":"gravity_well", "name":"黑潮·吸怪黑洞", "desc":"召唤黑洞魔鬼鱼黑潮，把周围的敌人吸到一起，同时打伤他们", "max":1, "icon":"◎"},
+	{"id":"blade_dance", "name":"刃舞·飞刀环", "desc":"召唤星刃螳螂刃舞，把卫星变成飞刀，伤害大幅提高", "max":1, "icon":"☄"},
+	{"id":"meteor_rain", "name":"坠火·陨石雨", "desc":"召唤陨石幼龙坠火，砸向最近的敌人（有首领就先砸首领），炸开一整片", "max":1, "icon":"✹"},
+	{"id":"aegis", "name":"星垒·护盾罩", "desc":"召唤晶甲星龟星垒，在你没有护盾时补上一层，挡住一次伤害", "max":1, "icon":"⬢"},
+	{"id":"execute", "name":"黑羽·补刀印记", "desc":"召唤渡鸦黑羽，替你收拾快倒下的小怪，对首领没用。放在别的宠物右边时，那只宠物打残血小怪也会更疼", "max":1, "icon":"!"},
+	{"id":"card_slot", "name":"加卡位", "desc":"自己占1格，但直接打开第6、第7个卡位；卡超过5张时不能丢掉", "max":1, "icon":"▣"},
+	{"id":"core_engine", "name":"助推引擎", "desc":"卡组里牌越多，它基础伤害越高，最多+30%；不会让它更费能量", "max":1, "icon":"◆"},
+	{"id":"combo_catalyst", "name":"组合放大器", "desc":"每组成一个组合，它伤害就翻高一点，最多×1.30", "max":1, "icon":"✦"},
+	{"id":"empty_stencil", "name":"空位加成", "desc":"每空一个卡位，它这次伤害多10%", "max":1, "icon":"□"},
+	{"id":"loyalty_cycle", "name":"第六次爆发", "desc":"它每打第6次，这一下伤害×2.20", "max":1, "icon":"⑥"},
+	{"id":"misprint", "name":"随机波动", "desc":"它每次伤害在×0.85到×1.35之间随机变", "max":1, "icon":"?"},
+	{"id":"pair_protocol", "name":"双牌加成", "desc":"卡组里有两张同一类的牌时，它伤害×1.15", "max":1, "icon":"Ⅱ"},
+	{"id":"trio_protocol", "name":"三牌加成", "desc":"卡组里有三张同一类的牌时，它伤害×1.25", "max":1, "icon":"Ⅲ"},
+	{"id":"sequence_protocol", "name":"排队加成", "desc":"它和后面两张牌、再加上宠物，排成连着的四张时，宠物基础伤害+20%", "max":1, "icon":"↠"},
+	{"id":"four_elements", "name":"四元素加成", "desc":"同时带着火焰弹头、冰冻印记、雷鸣和黑潮时，它伤害×1.45", "max":1, "icon":"✤"},
+	{"id":"hanging_echo", "name":"贴身加成", "desc":"让它这次伤害×1.22", "max":1, "icon":"↻"},
+	{"id":"blueprint", "name":"照抄右边", "desc":"照抄自己右边那张牌的效果", "max":1, "icon":"▧"},
+	{"id":"brainstorm", "name":"照抄第一张", "desc":"照抄卡组最左边那张牌的效果", "max":1, "icon":"⌁"},
+	{"id":"red_contract", "name":"不买变强", "desc":"逛完一整家商店什么都不买就长1层，每层让它伤害多5%，最多6层。卖掉它就清空", "max":1, "icon":"R"},
+	{"id":"green_momentum", "name":"不挨打变强", "desc":"一直打倒敌人又不挨打就长层，每层伤害+4%，最多10层。挨一下就清空", "max":1, "icon":"G"},
+	{"id":"campfire", "name":"卖牌变强", "desc":"每卖掉或换掉一张牌就长1层，每层伤害+8%，最多6层。打完首领清空", "max":1, "icon":"♨"},
+	{"id":"bull_reserve", "name":"存钱变强", "desc":"身上每有10星屑，它基础伤害+5%，最多+25%", "max":1, "icon":"◆"},
+	{"id":"low_deck", "name":"牌少变强", "desc":"卡组不到5张时，每少一张它伤害多12%", "max":1, "icon":"▽"},
+	{"id":"lucky_doubler", "name":"幸运骰子", "desc":"每次攻击有33%机会伤害×1.50，运气越好机会越大", "max":1, "icon":"⚄"},
+	{"id":"boss_matador", "name":"抓破绽", "desc":"带【露出弱点】本领的首领露出破绽时，它伤害×1.50", "max":1, "icon":"⚑"},
+	{"id":"luchador", "name":"破解面具", "desc":"下一个首领出现时这张牌会消失，并永久去掉那个首领的一个本领", "max":1, "icon":"◈"},
+	{"id":"juggler", "name":"多摆一件", "desc":"商店多摆1件商品；这张牌自己也占1个卡位", "max":1, "icon":"✥"},
+	{"id":"astronomer", "name":"组合加成", "desc":"只要有1个组合生效，它伤害×1.12", "max":1, "icon":"✧"},
+	{"id":"rocket", "name":"首领奖金", "desc":"打倒首领时多拿星屑；这一局打倒的首领越多，给得越多", "max":1, "icon":"➤"},
+	{"id":"moon_interest", "name":"存钱罐", "desc":"离开商店时，身上剩的星屑越多额外送得越多（10%，最多5）", "max":1, "icon":"☾"}
 ]
 
 var state := GameState.MENU
@@ -381,6 +390,7 @@ var run_new_story_ids: Array[String] = []
 var narrative_seen: Dictionary = {}
 var archive_category := "主线纪事"
 var pending_story_toast := ""
+var pending_area_growth_flash := false
 
 var elapsed := 0.0
 var spawn_timer := 0.0
@@ -520,6 +530,7 @@ var deck_empty_slots: Array[Control] = []
 var card_replace_overlay: Control
 var resonance_bar: ProgressBar
 var active_hand_label: Label
+var passive_state_label: Label
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -547,6 +558,9 @@ func _draw() -> void:
 func _process(delta: float) -> void:
 	if state != GameState.PLAYING:
 		return
+	if pending_area_growth_flash:
+		pending_area_growth_flash = false
+		flash_area_growth()
 	queue_redraw()
 	elapsed += delta
 	sample_run_metrics(delta)
@@ -745,6 +759,7 @@ func make_skill_icon(id: String) -> Texture2D:
 		"projectile": '<path d="M17 50l18-18 18 18-18 18zM47 50l18-18 18 18-18 18z" fill="#c084fc"/><path d="M10 79h80" stroke="#70d7ff" stroke-width="5"/>',
 		"pierce": '<circle cx="25" cy="50" r="12" fill="none" stroke="#8b9fc3" stroke-width="5"/><circle cx="55" cy="50" r="12" fill="none" stroke="#8b9fc3" stroke-width="5"/><path d="M10 50h70l-12-12m12 12L68 62" fill="none" stroke="#70f0ff" stroke-width="6"/>',
 		"area": '<circle cx="50" cy="50" r="32" fill="none" stroke="#c084fc" stroke-width="6"/><circle cx="50" cy="50" r="17" fill="none" stroke="#70d7ff" stroke-width="5"/><circle cx="50" cy="50" r="5" fill="#fff"/>',
+		"leash": '<path d="M18 66c14-22 26 8 40-12s24 4 26-14" fill="none" stroke="#facc15" stroke-width="7" stroke-linecap="round"/><circle cx="18" cy="66" r="10" fill="#70d7ff"/><circle cx="86" cy="36" r="10" fill="#c084fc"/><path d="M12 84h76" stroke="#607086" stroke-width="4" stroke-dasharray="7 6"/>',
 		"crit": '<circle cx="50" cy="50" r="25" fill="none" stroke="#ffbd69" stroke-width="7"/><path d="M50 10v22M50 68v22M10 50h22M68 50h22" stroke="#fff" stroke-width="6"/><circle cx="50" cy="50" r="7" fill="#ef476f"/>',
 		"magnet": '<path d="M22 19v37c0 35 56 35 56 0V19H61v37c0 13-22 13-22 0V19z" fill="#ef476f"/><path d="M22 19h17M61 19h17" stroke="#70d7ff" stroke-width="10"/>',
 		"aura": '<path d="M22 52c0-24 12-37 28-37s28 13 28 37l-10 9H32z" fill="#5b2a86" stroke="#c084fc" stroke-width="5"/><path d="M31 59v23m13-23c-7 12 6 13-1 25m14-25c7 12-5 13 2 25m10-25v23" fill="none" stroke="#c084fc" stroke-width="5" stroke-linecap="round"/><ellipse cx="57" cy="39" rx="9" ry="11" fill="#fff"/><circle cx="60" cy="40" r="4" fill="#25133f"/><path d="M15 50h8m54 0h8M50 8v8" stroke="#70d7ff" stroke-width="4"/>',
@@ -811,7 +826,7 @@ func make_skill_icon(id: String) -> Texture2D:
 	if shapes.has(id):
 		body = str(shapes[id])
 	else:
-		# 新构筑牌使用ID生成稳定且互不相同的星律纹章，绝不回退成同一图标。
+		# 新搭配牌使用ID生成稳定且互不相同的星律纹章，绝不回退成同一图标。
 		var icon_hash := absi(id.hash())
 		var accent := Color.from_hsv(float(icon_hash % 360) / 360.0, 0.66, 0.96).to_html(false)
 		var offset_a := 18 + icon_hash % 22
@@ -835,7 +850,7 @@ func make_character_portrait(character: String) -> Texture2D:
 		"骑士":
 			accent = "#ffbd69"
 			figure = '<path d="M70 160l11-57h58l12 57z" fill="#9a6630"/><circle cx="110" cy="70" r="33" fill="#ffbd69"/><path d="M75 70a35 35 0 0170 0v20H75z" fill="#d8e5f3"/><path d="M84 72h52v10H84z" fill="#17294a"/><path d="M148 94l39 16-8 47-42 8-10-45z" fill="#d89b45" stroke="#fff2c7" stroke-width="5"/><path d="M158 111l17 14-20 19z" fill="#fff2c7"/>'
-		"星术师":
+		"魔法师":
 			accent = "#c084fc"
 			figure = '<path d="M72 161l18-62h41l22 62z" fill="#7546a5"/><circle cx="110" cy="78" r="28" fill="#c084fc"/><path d="M67 61l45-49 43 54z" fill="#4c2777"/><path d="M72 62h85v13H72z" fill="#a86ee4"/><circle cx="110" cy="78" r="7" fill="#fff"/><path d="M155 62v93" stroke="#ffdc73" stroke-width="7"/><circle cx="155" cy="50" r="15" fill="#70f0ff"/><path d="M90 113l-38 21" stroke="#c084fc" stroke-width="14" stroke-linecap="round"/>'
 		"守卫":
@@ -865,7 +880,7 @@ func make_character_passive_icon(character: String) -> Texture2D:
 		"骑士":
 			accent = "#ffbd69"
 			symbol = '<path d="M50 15l29 11v22c0 19-12 31-29 39-17-8-29-20-29-39V26z" fill="#b97932" stroke="#fff2c7" stroke-width="5"/><path d="M50 31v36M32 49h36" stroke="#fff2c7" stroke-width="7" stroke-linecap="round"/>'
-		"星术师":
+		"魔法师":
 			accent = "#c084fc"
 			symbol = '<path d="M50 14l31 58H19z" fill="#573181" stroke="#d8b4fe" stroke-width="5"/><path d="M50 28L35 63h30z" fill="#70f0ff"/><circle cx="25" cy="28" r="8" fill="#fff"/><circle cx="77" cy="31" r="7" fill="#facc15"/>'
 		"守卫":
@@ -934,7 +949,7 @@ func character_opening_line(character: String) -> String:
 	match character:
 		"游侠": return "岚：弧牙，接好能量！我们一起把路找回来。"
 		"骑士": return "洛恩：暮环放心，我会挡住前面的危险。"
-		"星术师": return "弥星：先排好队形，再让星光出发。"
+		"魔法师": return "弥星：先排好队形，再让星光出发。"
 		"守卫": return "砾：卫星准备好，我们去修好那扇门。"
 		"影舞者": return "绯：刃舞跟紧我，我们比风暴更快。"
 		"星火使": return "烬歌：坠火，带上火种一起回家！"
@@ -957,30 +972,30 @@ func boss_character_reply(chapter: int, character: String) -> String:
 	if chapter in [2, 5] and character == "守卫": return "砾：弥垣，我带来了有出口的新图纸！"
 	if chapter in [3, 6] and character == "星火使": return "烬歌：空灯塔保护不了任何人，我们要一起回家！"
 	if chapter in [3, 6] and character == "影舞者": return "绯：星灵是伙伴，不是机器里的零件。"
-	if chapter == 6 and character == "星术师": return "弥星：合作也能修好灯塔，让我们试一次。"
+	if chapter == 6 and character == "魔法师": return "弥星：合作也能修好灯塔，让我们试一次。"
 	return "远征者：我们会保护彼此，也会一起修好这里。"
 
 func boss_half_story_line(boss_name: String, chapter: int) -> String:
 	match boss_name:
-		"星渊追猎者": return "赫巡：岚，你真的学会看路了……" if chapter >= 4 else "赫巡：为什么你们总能找到我留下的空隙？"
-		"星渊禁锢者": return "弥垣：也许，这扇门真的该打开了……" if chapter >= 5 else "弥垣：你们竟然躲开了所有陷阱。"
-		"星渊裁决者": return "天秤·零号：新答案成立——伙伴合作可以修复灯塔。" if chapter >= 6 else "天秤·零号：防卫失败，重新检查任务。"
-	return "Boss身上的故障光芒变弱了。"
+		"赫巡·追赶者": return "赫巡：岚，你真的学会看路了……" if chapter >= 4 else "赫巡：为什么你们总能找到我留下的空隙？"
+		"弥垣·关门人": return "弥垣：也许，这扇门真的该打开了……" if chapter >= 5 else "弥垣：你们竟然躲开了所有陷阱。"
+		"零号·守塔机器": return "天秤·零号：新答案成立——伙伴合作可以修复灯塔。" if chapter >= 6 else "天秤·零号：防卫失败，重新检查任务。"
+	return "首领身上的故障光芒变弱了。"
 
 func boss_memory_for_chapter(chapter: int) -> Dictionary:
 	var memories := {
 		1:{"title":"《赫巡的手画地图》", "text":"护甲里藏着一张通往月港的地图。赫巡一直记得岚和回家的路。"},
 		2:{"title":"《请在安全时开门》", "text":"城里的人留下许多纸条。他们想和弥垣一起走出大门。"},
 		3:{"title":"《灯塔的真正任务》", "text":"旧说明书写着：灯塔要帮助大家回家，而不是把大家挡在外面。"},
-		4:{"title":"《第十三号路线》", "text":"赫巡交出自己的秘密地图，并承认岚已经能独自带路。"},
+		4:{"title":"《新的路线》", "text":"赫巡交出自己的秘密地图，并承认岚已经能独自带路。"},
 		5:{"title":"《有两个出口的新图纸》", "text":"弥垣和砾决定一起修城。每座新房子都要留出安全出口。"},
-		6:{"title":"《伙伴供能计划》", "text":"远征者给星灵供能，星灵再为灯塔供能。大家一起完成了修复。"}
+		6:{"title":"《伙伴充能计划》", "text":"远征者给星灵充能，星灵再为灯塔充能。大家一起完成了修复。"}
 	}
 	return memories.get(chapter, {"title":"《巡逻记录》", "text":"远征队又修好了一小段星路。"})
 
 func show_endless_story_beat(wave: int) -> void:
 	var lines := {
-		3:"敌人学会观察卡组了。留意Boss词条，及时改变战法。",
+		3:"敌人学会观察卡组了。留意首领本领，及时改变战法。",
 		6:"六名远征者寄出了家书：巡逻结束后，我们一起回家。",
 		9:"赫巡点亮新路灯：道路会提醒危险，也会帮助朋友见面。",
 		12:"弥垣种下第一棵树：真正的保护，是一起面对风雨。",
@@ -992,28 +1007,28 @@ func show_endless_story_beat(wave: int) -> void:
 func pet_first_meeting_line(id: String) -> String:
 	var lines := {
 		"aura":"暮环加入队伍：给它能量，它会展开近身光环。",
-		"orbit":"环尾加入队伍：给它能量，它会召唤轨道卫星。",
-		"satellite_engine":"枢核加入队伍：它能制造更多小卫星。",
+		"orbit":"环尾加入队伍：给它能量，它会召唤绕圈卫星。",
+		"satellite_engine":"蜂蜂加入队伍：它能制造更多小卫星。",
 		"chain":"弧牙加入队伍：它的雷电会在敌人之间跳跃。",
-		"nova":"爆星加入队伍：敌人靠近时，它会发动星核爆破。",
-		"phase_step":"瞬影加入队伍：它会冲过敌人并留下相位印记。",
-		"thunder_orb":"鸣霄加入队伍：它会把雷球投向重要目标。",
-		"gravity_well":"黯潮加入队伍：它能把附近敌人拉到一起。",
+		"nova":"爆星加入队伍：敌人靠近时，它会发动爆炸波。",
+		"phase_step":"瞬影加入队伍：它会冲过敌人并留下闪冲印记。",
+		"thunder_orb":"雷鸣加入队伍：它会把雷球投向重要目标。",
+		"gravity_well":"黑潮加入队伍：它能把附近敌人拉到一起。",
 		"blade_dance":"刃舞加入队伍：它会用飞刃守住身边区域。",
-		"meteor_rain":"坠火加入队伍：它会召唤陨星轰击一片区域。",
+		"meteor_rain":"坠火加入队伍：它会召唤陨石轰击一片区域。",
 		"aegis":"星垒加入队伍：它会展开护盾挡住危险。",
-		"execute":"断罪加入队伍：它会击倒生命很低的普通敌人。"
+		"execute":"黑羽加入队伍：它会击倒生命很低的普通敌人。"
 	}
 	return str(lines.get(id, ""))
 
 func relic_story_line(id: String) -> String:
 	var lines := {
-		"predator_boots":"赫巡留下的领航靴，让角色移动和供能都更快。",
+		"predator_boots":"赫巡留下的领航靴，让角色移动和充能都更快。",
 		"rift_compass":"弥垣的修理罗盘，指针会寻找最近的安全出口。",
 		"judge_spark":"零号停下来思考时，核心里掉出的一颗小火花。",
 		"ember_vessel":"烬歌保存家乡炉火的容器，里面还有温暖的火种。",
 		"aegis_fragment":"星垒留下的晶甲会提高角色生命、护甲并提供护盾。",
-		"storm_relay":"它能让弧牙和鸣霄的雷声传得更远。"
+		"storm_relay":"它能让弧牙和雷鸣的雷声传得更远。"
 	}
 	return str(lines.get(id, ""))
 
@@ -1028,19 +1043,19 @@ func relic_rank(id: String) -> int:
 
 func announce_new_combo_stories() -> void:
 	var lines := {
-		"熔雷回路":"火焰碰到连锁雷电，敌群发生熔雷爆燃。",
-		"星环矩阵":"暮环、环尾和枢核组成更大的卫星队形。",
-		"极寒天火":"寒霜锁住敌人，坠火的陨星把印记一起引爆。",
-		"坍缩爆心":"黯潮先把敌人拉拢，爆星再从中心发动爆破。",
-		"瞬身刃舞":"瞬影留下路线，刃舞的飞刃紧跟着穿过敌群。",
-		"风暴导体":"鸣霄标记目标，弧牙让雷电跳向更多敌人。"
+		"火雷组合":"火焰碰到连锁雷电，敌群发生熔雷爆燃。",
+		"卫星光环":"暮环、环尾和蜂蜂组成更大的卫星队形。",
+		"冰火组合":"冰冻锁住敌人，坠火的陨石把印记一起引爆。",
+		"聚怪爆炸":"黑潮先把敌人拉拢，爆星再从中心发动爆破。",
+		"闪冲飞刀":"瞬影留下路线，刃舞的飞刃紧跟着穿过敌群。",
+		"雷电接力":"雷鸣标记目标，弧牙让雷电跳向更多敌人。"
 	}
 	for combo_name in active_combo_names():
 		var key := "combo_story_" + combo_name
 		if narrative_seen.has(key):
 			continue
 		narrative_seen[key] = true
-		var combo_achievement: String = str({"极寒天火":"combo_frostfire", "坍缩爆心":"combo_collapse", "瞬身刃舞":"combo_blade", "风暴导体":"combo_storm"}.get(combo_name, ""))
+		var combo_achievement: String = str({"冰火组合":"combo_frostfire", "聚怪爆炸":"combo_collapse", "闪冲飞刀":"combo_blade", "雷电接力":"combo_storm"}.get(combo_name, ""))
 		if not combo_achievement.is_empty():
 			award_achievement(combo_achievement)
 		pending_story_toast = "宠物组合 · %s\n%s" % [combo_name, str(lines.get(combo_name, "两只宠物配合出了新的攻击。"))]
@@ -1133,7 +1148,7 @@ func show_story_archive(category := "主线纪事", selected_id := "") -> void:
 		"人物志":"伙伴故事",
 		"星灵谱":"宠物图鉴",
 		"异象录":"怪物与规则",
-		"遗物馆":"宝物图鉴"
+		"宝物馆":"宝物图鉴"
 	}
 	for category_name in StoryArchiveData.CATEGORIES:
 		var category_button := make_compact_button(str(category_labels.get(str(category_name), category_name)), Vector2(0, 42))
@@ -1307,13 +1322,15 @@ func show_character_select() -> void:
 	cards.add_theme_constant_override("h_separation", 10)
 	cards.add_theme_constant_override("v_separation", 8)
 	box.add_child(cards)
+	# 第 5 列原本是「默认/可用」的死数据：代码从不读它，内容也和真实解锁条件相反，已删除。
+	# 六个角色都是两只宠物开局，两只都要写出来；负面属性也一并写清楚。
 	var data := [
-		["游侠", "精准供能", "供能弹更强更快\n开局弧牙，全部宠物伤害+10%", "66d9ff", "默认"],
-		["骑士", "守护供能", "生命 +45、护甲 +3\n受击会为防御宠物补充能量", "ffbd69", "可用"],
-		["星术师", "分流供能", "每枚供能弹携带更多能量\n开局拥有微弱光环", "c084fc", "可用"],
-		["守卫", "阵地供能", "生命 +30、护甲 +2\n站稳后供能强度提高", "4ade80", "默认可用"],
-		["影舞者", "移动供能", "高速移动时供能更频繁\n宠物暴击+20%，开局刃舞", "f472b6", "默认可用"],
-		["星火使", "过热供能", "连续供能逐渐提高强度\n宠物伤害+5%、范围+15%", "fb923c", "默认可用"]
+		["游侠", "能量弹更有力", "开局：弧牙 + 暮环\n所有宠物伤害+10%，每发能量弹更足", "66d9ff"],
+		["骑士", "挨打也能充能", "开局：暮环 + 星垒\n血+45、护甲+3，挨打时给星垒或暮环补能量，但跑得慢一点", "ffbd69"],
+		["魔法师", "每发能量更多", "开局：暮环 + 雷鸣\n能量弹装得更满，但血少10、跑得快一点", "c084fc"],
+		["守卫", "站住不动更强", "开局：环尾 + 黑潮\n血+30、护甲+2，站稳后充能强35%，跑得慢一点", "4ade80"],
+		["影舞者", "跑起来充能更快", "开局：刃舞 + 瞬影\n所有宠物暴击+20%，血少15、跑得快很多", "f472b6"],
+		["星火使", "连续充能会升温", "开局：暮环 + 坠火\n宠物伤害+5%、范围+15%，血+5、跑得稍慢", "fb923c"]
 	]
 	for info in data:
 		var unlocked := is_character_unlocked(str(info[0]))
@@ -1349,7 +1366,7 @@ func show_character_select() -> void:
 		choose.disabled = not unlocked or selected
 		choose.pressed.connect(select_character.bind(info[0]))
 		actions.add_child(choose)
-		var journey_achievement: String = str({"游侠":"ranger_journey", "骑士":"knight_journey", "星术师":"mage_journey", "守卫":"guardian_journey", "影舞者":"dancer_journey", "星火使":"fire_journey"}.get(str(info[0]), ""))
+		var journey_achievement: String = str({"游侠":"ranger_journey", "骑士":"knight_journey", "魔法师":"mage_journey", "守卫":"guardian_journey", "影舞者":"dancer_journey", "星火使":"fire_journey"}.get(str(info[0]), ""))
 		var lore := make_compact_button("档案", Vector2(68, 30))
 		lore.add_theme_font_size_override("font_size", 11)
 		lore.disabled = str(journey_achievement).is_empty() or not str(journey_achievement) in SaveManager.data.achievements
@@ -1407,7 +1424,7 @@ func show_help() -> void:
 	box.add_theme_constant_override("separation", 14)
 	panel.add_child(box)
 	box.add_child(make_label("远征指南", 40, Color("70d7ff")))
-	var guide := "移动：使用 WASD 或方向键。主角不会直接攻击敌人，而会自动向宠物发射供能弹。\n\n战斗：宠物吸收足够能量且攻击范围内有目标时释放技能；大多数宠物没有独立技能冷却。每次宠物释技都按卡组从左到右结算，相邻位置、标签与元素组合会形成星式。\n\n成长：蓝色星屑是商店货币。宠物与规则卡进入卡组；角色训练购买后立即消耗，只提高基础属性且不占卡槽，角色专精属性收益更高。\n\n威胁：敌群会随时间变强；完成六关主线后，可以胜利结算，也可以继续进入无尽挑战。\n\n构筑：卡组卡牌最多7张；槽满时可出售替换，也可以放弃购买。组合、进化、训练与Boss遗物只在本局生效。\n\n公平远征：没有局外属性养成；成就负责解锁角色与故事档案。"
+	var guide := "走路：WASD 或方向键。\n\n打架：你不打敌人，你给宠物发能量弹。宠物攒满就自己放技能。\n\n卡牌：宠物左边的牌给它加力气，右边的牌把伤害翻倍。同一张牌放左边和放右边不一样。\n\n变强：打倒敌人掉星屑，星屑在商店买东西。卡位最多7个，满了可以卖旧牌换新牌。\n\n下一局：只有成就和故事会留下来，别的都要重新攒。"
 	var text := make_label(guide, 20, Color("c7d7eb"))
 	text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	text.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -1493,6 +1510,7 @@ func start_game_after_prologue() -> void:
 	run_new_story_ids.clear()
 	narrative_seen.clear()
 	pending_story_toast = ""
+	pending_area_growth_flash = false
 	boss_spawned.clear()
 	boss_warned.clear()
 	endless_mode = false
@@ -1688,7 +1706,7 @@ func build_hud() -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 20)
 	top.add_child(row)
-	time_label = make_label("下个Boss 01:00", 22, Color("f8fbff"))
+	time_label = make_label("下个首领 01:00", 22, Color("f8fbff"))
 	time_label.custom_minimum_size.x = 170
 	row.add_child(time_label)
 	var bars := VBoxContainer.new()
@@ -1719,6 +1737,7 @@ func build_hud() -> void:
 	displayed_health = player.health
 	active_hand_label = null
 	resonance_bar = null
+	passive_state_label = null
 	level_label = make_label("◆ 星屑 0", 20, Color("facc15"))
 	level_label.custom_minimum_size.x = 126
 	row.add_child(level_label)
@@ -1754,16 +1773,21 @@ func build_hud() -> void:
 	passive_row.add_child(passive_box)
 	passive_box.add_child(make_label("%s · 固有特性" % player.character_name, 13, player.color))
 	var passive_descriptions := {
-		"游侠":"高效供能 · 宠物伤害+10% · 初始弧牙",
-		"骑士":"受击补能 · 生命+45 护甲+3",
-		"星术师":"高密度供能 · 微光环",
-		"守卫":"站稳后供能+35% · 双卫星",
-		"影舞者":"移动供能加快 · 宠物暴击+20% · 初始刃舞",
-		"星火使":"连续供能升温 · 宠物伤害+5% 范围+15%"
+		"游侠":"能量弹更足 · 宠物伤害+10% · 开局弧牙+暮环",
+		"骑士":"挨打时给星垒/暮环/刃舞补能量 · 血+45 护甲+3 · 开局暮环+星垒",
+		"魔法师":"每发能量更多 · 光环较小 · 开局暮环+雷鸣",
+		"守卫":"站稳后充能+35% · 血+30 护甲+2 · 开局环尾+黑潮",
+		"影舞者":"跑起来充能更快 · 宠物暴击+20% · 开局刃舞+瞬影",
+		"星火使":"连续充能升温 · 宠物伤害+5% 范围+15% · 开局暮环+坠火"
 	}
 	var passive_note := make_label(str(passive_descriptions.get(player.character_name, "")), 8, Color("c7d7eb"))
 	passive_note.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	passive_box.add_child(passive_note)
+	# 守卫、影舞者、星火使的被动都是「满足条件才生效」。上面那行是静态说明，
+	# 这一行告诉玩家「此刻生效了没有」——不然孩子无从判断自己站够了没、跑得够不够快。
+	passive_state_label = make_label("", 9, player.color)
+	passive_state_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	passive_box.add_child(passive_state_label)
 	var deck_panel := PanelContainer.new()
 	deck_panel.position = Vector2(24, 535)
 	deck_panel.size = Vector2(930, 175)
@@ -1772,7 +1796,7 @@ func build_hud() -> void:
 	var deck_box := VBoxContainer.new()
 	deck_box.add_theme_constant_override("separation", 4)
 	deck_panel.add_child(deck_box)
-	deck_status_label = make_label("宠物伤害＝基础值 × 基础伤害 × 左侧加算 × 右侧乘算 × 暴击/版本", 11, Color("facc15"))
+	deck_status_label = make_label("左边的牌先给宠物加力气，右边的牌再把伤害翻倍", 11, Color("facc15"))
 	deck_box.add_child(deck_status_label)
 	deck_card_row = HBoxContainer.new()
 	deck_card_row.add_theme_constant_override("separation", 6)
@@ -1801,18 +1825,24 @@ func build_hud() -> void:
 func update_hud() -> void:
 	if not is_instance_valid(hud) or not is_instance_valid(player):
 		return
-	time_label.text = "Boss %s" % next_boss_time()
+	time_label.text = "下个首领 %s" % next_boss_time()
 	level_label.text = "◆ 星屑 %d" % star_shards
 	kill_label.text = "击败 %d" % kills
 	hp_bar.max_value = player.max_health
 	hp_bar.value = player.health
 	if is_instance_valid(resonance_bar):
 		resonance_bar.value = resonance
-	if is_instance_valid(active_hand_label):
-		var ready_text := "发射" if pulse_timer <= 0.01 else "供能 %.1fs" % pulse_timer
-		active_hand_label.text = "主角供能 · %s · 共鸣%d%%" % [ready_text, int(resonance)]
-		if lone_star_protocol_active():
-			active_hand_label.text += " · 孤星星火"
+	if is_instance_valid(passive_state_label):
+		var passive_state := ""
+		match player.character_name:
+			"守卫":
+				passive_state = "站稳了，充能+35%" if guardian_stationary_time >= 1.2 else "走动中，站稳会更强"
+			"影舞者":
+				passive_state = "跑起来了，充能更快" if player.velocity.length() > player.speed * 0.55 else "跑起来充能会更快"
+			"星火使":
+				passive_state = "火热 +%d%%" % int(round(fire_energy_heat * 100.0)) if fire_energy_heat > 0.005 else "连续充能会升温"
+		passive_state_label.text = passive_state
+		passive_state_label.visible = not passive_state.is_empty()
 	var bosses_left := 6 - boss_kills
 	var active_bosses := get_tree().get_nodes_in_group("bosses")
 	check_boss_story_beats(active_bosses)
@@ -1836,10 +1866,10 @@ func update_hud() -> void:
 			mode_label.text += " · 压力%+d%%" % int(round((run_pressure_scale - 1.0) * 100.0))
 		mode_label.add_theme_color_override("font_color", Color("c7d7eb"))
 	if lone_star_protocol_active():
-		mode_label.text += " · 孤星协议"
+		mode_label.text += " · 没有能打的宠物，你自己出手"
 		mode_label.add_theme_color_override("font_color", Color("70d7ff"))
 	if not danger_contract.is_empty():
-		mode_label.text += " · 危险契约 %d/%d" % [maxi(0, kills - int(danger_contract.kills)), int(danger_contract.target)]
+		mode_label.text += " · 危险挑战 %d/%d" % [maxi(0, kills - int(danger_contract.kills)), int(danger_contract.target)]
 		mode_label.add_theme_color_override("font_color", Color("ef476f"))
 	elif not wave_goal.is_empty():
 		var goal_progress := wave_resonance_generated
@@ -1851,7 +1881,7 @@ func update_hud() -> void:
 
 func update_skill_list() -> void:
 	if is_instance_valid(deck_status_label):
-		deck_status_label.text = "宠物伤害＝基础值 × 基础伤害 × 左侧加算 × 右侧乘算 × 暴击/版本　当前有效倍率×%.2f　共鸣 %d/%d" % [last_chain_multiplier, int(resonance), int(MAX_RESONANCE)]
+		deck_status_label.text = "左边的牌先给宠物加力气，右边的牌再把伤害翻倍　这次一共放大了%.2f倍　气势 %d/%d" % [last_chain_multiplier, int(resonance), int(MAX_RESONANCE)]
 	update_deck_card_row()
 
 func update_deck_card_row() -> void:
@@ -1885,9 +1915,9 @@ func update_deck_card_row() -> void:
 		if id in CORE_SKILL_CARD_IDS:
 			display_title += " ★%d" % core_mastery_rank(id)
 		match control_state:
-			"sealed": description += "\n\n【封印中】暂时不参与结算；击败5名敌人可提前解除。"
-			"stolen": description += "\n\n【被盗】暂时不释放技能；靠近Boss身边的宠物可夺回。"
-			"charmed": description += "\n\n【被魅惑】暂时倒戈发射敌弹；靠近宠物可净化。"
+			"sealed": description += "\n\n【被封住了】这张牌暂时不算数；打倒5个敌人就能提前解开。"
+			"stolen": description += "\n\n【被盗】暂时不释放技能；靠近首领身边的宠物可夺回。"
+			"charmed": description += "\n\n【被迷惑】暂时倒戈发射敌弹；靠近宠物可净化。"
 		card.set_card(id, make_skill_icon(id), display_title, maxi(1, int(upgrade_levels.get(id, 0))), index + 1, float(cd.remaining), float(cd.total), description, card_order_rule_text(id), rarity, CARD_RARITY_COLORS.get(rarity, Color("9bb4d1")))
 		match control_state:
 			"sealed": card.modulate = Color("8f719f")
@@ -1933,7 +1963,7 @@ func equipped_pet_count() -> int:
 	return count
 
 func is_sustainable_offense_pet(id: String) -> bool:
-	# 处决无法从满血自行启动，护盾不产生伤害；引力奇点现在会造成范围伤害。
+	# 打倒无法从满血自行启动，护盾不产生伤害；吸怪黑洞现在会造成范围伤害。
 	return id in CORE_SKILL_CARD_IDS and not id in ["aegis", "execute"]
 
 func has_sustainable_offense_pet() -> bool:
@@ -1995,6 +2025,9 @@ func refresh_skill_entities() -> void:
 			var entity: SkillEntity = skill_entities[id]
 			entity.set_formation(index, active_ids.size())
 
+func pet_tether_range() -> float:
+	return BASE_TETHER_RANGE + float(upgrade_levels.get("leash", 0)) * TETHER_RANGE_PER_LEVEL
+
 func pet_hunt_target() -> Vector2:
 	if not is_instance_valid(player):
 		return Vector2.ZERO
@@ -2046,11 +2079,10 @@ func echo_skill_after_delay(id: String, target_position: Vector2, captured_damag
 		if is_instance_valid(target):
 			target.take_damage(float(record.get("damage", 0.0)) * 0.55, Vector2.ZERO, "echo")
 	spawn_skill_effect(center, "nova", Color("e8f5ff"), 72.0 * skill_area_multiplier(id))
-	show_toast("回响 · %s再次触发" % card_display_name(id), Color("e8f5ff"), 0.45)
 
 func swap_equipped_cards(source_id: String, target_id: String) -> void:
 	if boss_shuffle_remaining > 0.0:
-		show_toast("逆序洗牌期间无法调整卡序", Color("facc15"), 0.7)
+		show_toast("卡牌倒转期间无法调整卡序", Color("facc15"), 0.7)
 		return
 	var source_index := equipped_cards.find(source_id)
 	var target_index := equipped_cards.find(target_id)
@@ -2059,28 +2091,28 @@ func swap_equipped_cards(source_id: String, target_id: String) -> void:
 	var moved_id := equipped_cards[source_index]
 	equipped_cards[source_index] = equipped_cards[target_index]
 	equipped_cards[target_index] = moved_id
-	show_toast("卡牌顺序已调整 · 从左到右重新结算", Color("facc15"), 0.7)
+	show_toast("卡牌换好位置了 · 重新从左往右算", Color("facc15"), 0.7)
 	update_deck_card_row()
 
 func skill_description(id: String) -> String:
 	for upgrade in UPGRADES:
 		if upgrade.id == id:
 			if is_training_card(id):
-				return "%s\n当前角色收益：【%s】\n购买后立即使用，不占卡槽。" % [str(upgrade.desc), training_gain_preview(id)]
-			var effect := "%s\n作用范围：【%s】" % [str(upgrade.desc), card_effect_scope(id)]
+				return "%s\n这个角色能加：【%s】\n买下马上用掉，不占卡位。" % [str(upgrade.desc), training_gain_preview(id)]
+			var effect := "%s\n怎么放：【%s】" % [str(upgrade.desc), card_effect_scope(id)]
 			if id in CORE_SKILL_CARD_IDS and CORE_MASTERY_RULES.has(id):
 				var rule: Dictionary = CORE_MASTERY_RULES[id]
 				var rank := core_mastery_rank(id)
-				var progress_text := "已满级" if rank >= CORE_MASTERY_MAX_RANK else "%d/%d" % [int(core_mastery_progress.get(id, 0)), core_mastery_requirement(id)]
-				var release_rule := "独立冷却%.2f秒" % PHASE_STEP_COOLDOWN if id == "phase_step" else "无技能冷却"
-				return "%s\n供能需求：%.1f · 充满后释放，%s\n升级条件：%s（★%d · %s）" % [effect, pet_energy_requirement(id), release_rule, str(rule.condition), rank, progress_text]
+				var progress_text := "已经满级" if rank >= CORE_MASTERY_MAX_RANK else "%d/%d" % [int(core_mastery_progress.get(id, 0)), core_mastery_requirement(id)]
+				var release_rule := "自己有%.2f秒冷却" % PHASE_STEP_COOLDOWN if id == "phase_step" else "没有冷却"
+				return "%s\n要多少能量：%.1f · 攒满就放，%s\n升级条件：%s（★%d · %s）" % [effect, pet_energy_requirement(id), release_rule, str(rule.condition), rank, progress_text]
 			return effect
 	match id:
-		"aura": return "自动伤害宠物周围的敌人。\n作用范围：【以暮环为中心】"
-		"orbit": return "自动释放卫星攻击宠物附近的敌人。\n作用范围：【以环尾为中心】"
-		"endless_damage": return "宠物后置增伤，最高×1.50。\n作用范围：【对应宠物右侧全部】"
-		"endless_vitality": return "4秒未受伤后持续恢复生命。\n作用范围：【全局】"
-		"endless_haste": return "被群敌包围时加速技能与移动。\n作用范围：【全局】"
+		"aura": return "自动伤害暮环周围的敌人。\n怎么放：【以暮环为中心】"
+		"orbit": return "卫星绕着环尾转圈打人。\n怎么放：【以环尾为中心】"
+		"endless_damage": return "放在宠物右边，让它伤害变高，最多×1.50。\n怎么放：【放在宠物右边才生效】"
+		"endless_vitality": return "4秒没挨打就开始一直回血。\n怎么放：【整局一直生效】"
+		"endless_haste": return "宠物还没充满时你跑得更快；身边围了3个以上敌人时充能也更快。\n怎么放：【整局一直生效】"
 	return id
 
 func core_mastery_rank(id: String) -> int:
@@ -2115,12 +2147,12 @@ func record_core_mastery(id: String, amount := 1) -> void:
 	core_mastery_ranks[id] = rank
 	core_mastery_progress[id] = 0 if rank >= CORE_MASTERY_MAX_RANK else progress
 	if ranked_up:
-		show_toast("条件养成完成 · %s ★%d\n%s" % [card_display_name(id), rank, str(rule.bonus)], Color("facc15"), 1.8)
+		show_toast("熟练度升级 · %s ★%d\n%s" % [card_display_name(id), rank, str(rule.bonus)], Color("facc15"), 1.8)
 		spawn_skill_effect(skill_entity_origin(id), "nova", Color("facc15"), 62.0 + rank * 5.0)
 		play_tone(720.0 + rank * 45.0, 0.12, 0.18)
 		if str(card_seals.get(id, "")) == "gold":
 			gain_star_shards(2)
-			show_toast("金蜡封回响 · 获得◆2", Color("facc15"), 0.8)
+			show_toast("金贴纸回声 · 获得◆2", Color("facc15"), 0.8)
 	update_skill_list()
 
 func core_mastery_damage_factor(id: String) -> float:
@@ -2185,7 +2217,7 @@ func refresh_derived_card_effects() -> void:
 	var dancer_passive := int(upgrade_levels.get("dancer_execution", 0)) > 0
 	var fire_passive := int(upgrade_levels.get("fire_rite", 0)) > 0
 	aura_radius = 168.0
-	if player.character_name == "星术师":
+	if player.character_name == "魔法师":
 		aura_radius = 132.0
 	elif player.character_name == "星火使":
 		aura_radius = 205.0
@@ -2284,7 +2316,7 @@ func insure_pet_before_sale(id: String) -> void:
 	var progress := int(core_mastery_progress.get(id, 0))
 	insured_pet_mastery[id] = {"rank":int(floor(rank * 0.5)), "progress":int(floor(progress * 0.5))}
 	pet_insurance_used = true
-	show_toast("宠物保险生效 · 再次获得%s时返还一半养成" % card_display_name(id), Color("70d7ff"), 1.3)
+	show_toast("宠物保险生效 · 下次再拿到%s时，一半熟练度还给你" % card_display_name(id), Color("70d7ff"), 1.3)
 
 func restore_insured_pet(id: String) -> void:
 	if not insured_pet_mastery.has(id):
@@ -2293,26 +2325,26 @@ func restore_insured_pet(id: String) -> void:
 	core_mastery_ranks[id] = int(saved.get("rank", 0))
 	core_mastery_progress[id] = int(saved.get("progress", 0))
 	insured_pet_mastery.erase(id)
-	show_toast("宠物保险返还 · %s恢复至★%d" % [card_display_name(id), core_mastery_rank(id)], Color("70d7ff"), 1.2)
+	show_toast("宠物保险 · %s的熟练度恢复到★%d" % [card_display_name(id), core_mastery_rank(id)], Color("70d7ff"), 1.2)
 
 func card_display_name(id: String) -> String:
 	for upgrade in UPGRADES:
 		if upgrade.id == id:
 			var edition_name := card_edition_name(str(card_editions.get(id, "")))
 			var base_name := ("%s·%s" % [edition_name, upgrade.name]) if not edition_name.is_empty() else str(upgrade.name)
-			var drawback_name := str({"fragile":"脆裂", "rental":"租赁", "eternal":"永恒"}.get(str(card_drawbacks.get(id, "")), ""))
+			var drawback_name := str({"fragile":"易碎", "rental":"租来的", "eternal":"永久"}.get(str(card_drawbacks.get(id, "")), ""))
 			return ("%s·%s" % [drawback_name, base_name]) if not drawback_name.is_empty() else base_name
 	match id:
-		"endless_damage": return "无尽蓄压"
-		"endless_vitality": return "无尽静息"
-		"endless_haste": return "无尽围猎"
+		"endless_damage": return "无尽加力"
+		"endless_vitality": return "无尽回血"
+		"endless_haste": return "无尽加速"
 	return id
 
 func card_drawback_description(id: String) -> String:
 	match str(card_drawbacks.get(id, "")):
-		"fragile": return "【脆裂版本】技能伤害+25%，角色受到伤害+18%。"
-		"rental": return "【租赁版本】每次离店收取◆1；欠费会从后续星屑收入自动扣除。"
-		"eternal": return "【永恒版本】本局不能出售、替换或被熔解。"
+		"fragile": return "【易碎版本】宠物伤害+25%，但你自己挨打会疼18%。"
+		"rental": return "【租来的版本】每次离开商店要交◆1；没钱先欠着，以后自动从星屑里扣。"
+		"eternal": return "【永久版本】这一局不能卖掉、换掉，也不能拆掉。"
 	return ""
 
 func card_rarity(id: String) -> String:
@@ -2337,53 +2369,55 @@ func card_build_type(id: String) -> String:
 	if id in CORE_SKILL_CARD_IDS:
 		return "宠物"
 	if id in ["homing", "burn", "frost_brand", "projectile", "pierce", "area"]:
-		return "技能改造"
+		return "改造牌"
 	if id in ["momentum", "soul_siphon", "execute", "aegis"]:
 		return "触发牌"
 	if id in ["glass", "gamble"]:
-		return "风险倍率"
+		return "冒险牌"
 	if id in ["card_slot", "core_engine", "combo_catalyst"]:
-		return "构筑规则"
+		return "搭配规则"
 	if id in ["pair_protocol", "trio_protocol", "sequence_protocol", "four_elements", "empty_stencil", "low_deck", "astronomer"]:
-		return "牌型规则"
+		return "阵型牌"
 	if id in ["blueprint", "brainstorm", "hanging_echo"]:
-		return "复制回响"
+		return "照抄牌"
 	if id in ["red_contract", "campfire", "bull_reserve", "rocket", "moon_interest", "juggler"]:
-		return "商店经济"
+		return "商店牌"
 	if id in ["luchador", "boss_matador"]:
-		return "Boss反制"
+		return "克制首领"
 	if id in ["loyalty_cycle", "misprint", "green_momentum", "lucky_doubler"]:
-		return "节奏倍率"
-	return "条件属性"
+		return "节奏牌"
+	return "条件牌"
 
 func card_effect_scope(id: String) -> String:
 	if is_training_card(id):
-		return "购买后立即作用于角色，不占卡槽"
+		return "买下马上用在自己身上，不占卡位"
 	if id in ["aura", "nova", "orbit", "satellite_engine", "blade_dance"]:
-		return "以对应宠物为中心"
-	if id in ["chain", "thunder_orb", "gravity_well", "meteor_rain", "execute"]:
-		return "由对应宠物索敌"
+		return "以这只宠物为中心"
+	if id == "execute":
+		return "自己找残血小怪；放在别的宠物右边还能帮那只宠物补刀"
+	if id in ["chain", "thunder_orb", "gravity_well", "meteor_rain"]:
+		return "由这只宠物自己找目标"
 	if id == "phase_step":
-		return "宠物触发玩家突进"
+		return "宠物带着你一起冲"
 	if id == "aegis":
-		return "宠物为玩家施加护盾"
+		return "宠物给你套护盾"
 	if id in ["damage", "health", "core_engine"]:
-		return "对应宠物左侧全部"
+		return "放在宠物左边才生效"
 	if id == "sequence_protocol":
-		return "对应宠物左侧第3格"
+		return "放在宠物左边第3格才生效"
 	if id == "hanging_echo":
-		return "对应宠物右侧相邻"
+		return "要紧贴在宠物右边"
 	if id == "blueprint":
-		return "自身右侧相邻1张"
+		return "照抄自己右边那一张"
 	if id == "brainstorm":
-		return "卡组最左侧1张"
+		return "照抄卡组最左边那一张"
 	if id in ["burn", "frost_brand", "projectile", "pierce"]:
-		return "对应宠物左右两侧（顺序改变效果）"
+		return "宠物左右都能放，放的位置不同效果也不同"
 	if id == "homing":
-		return "技能改造；对应宠物右侧附加伤害"
+		return "改造牌；放在宠物右边给它加伤害"
 	if id in ["crit", "glass", "gamble", "combo_catalyst", "execute", "endless_damage", "empty_stencil", "loyalty_cycle", "misprint", "pair_protocol", "trio_protocol", "four_elements", "red_contract", "green_momentum", "campfire", "bull_reserve", "low_deck", "lucky_doubler", "boss_matador", "astronomer"]:
-		return "对应宠物右侧全部"
-	return "全局"
+		return "放在宠物右边才生效"
+	return "整局一直生效"
 
 func card_edition_name(edition_id: String) -> String:
 	for edition in CARD_EDITIONS:
@@ -2396,7 +2430,7 @@ func active_combo_names() -> Array[String]:
 	for combo in DECK_COMBOS:
 		var cards: Array = combo.cards
 		var active := is_card_active(str(cards[0])) and is_card_active(str(cards[1]))
-		if combo.name == "星环矩阵":
+		if combo.name == "卫星光环":
 			active = is_card_active("aura") and (is_card_active("orbit") or is_card_active("satellite_engine"))
 		if active:
 			result.append(str(combo.name))
@@ -2407,14 +2441,18 @@ func active_combo_count() -> int:
 
 func card_order_rule_text(id: String) -> String:
 	if is_training_card(id):
-		return "[%s·一次性训练] %s；购买后立即消耗，不进入卡组" % [card_rarity(id), skill_description_short(id)]
+		return "[%s·一次性训练] %s；买下马上用掉，不进卡组" % [card_rarity(id), skill_description_short(id)]
 	var rule := "[%s·%s] %s" % [card_rarity(id), card_build_type(id), skill_description_short(id)]
-	if id in ["damage", "health", "core_engine"]:
-		rule += "；放在宠物左侧才进入准备阶段"
-	elif id in ["crit", "glass", "gamble", "combo_catalyst", "execute"]:
-		rule += "；放在宠物右侧才进入结算阶段"
+	if id == "core_engine":
+		rule += "；要放在宠物左边"
+	elif id in ["glass", "gamble", "combo_catalyst"]:
+		rule += "；要放在宠物右边"
+	elif id == "execute":
+		# 黑羽既是宠物又是规则牌，放哪儿都有用，别再给它一句「必须放右边」——
+		# 那和它自己的作用范围说明直接冲突。
+		rule += "；它自己会补刀，放在别的宠物右边还能帮那只宠物补刀"
 	elif id in ["burn", "frost_brand"]:
-		rule += "；按所在位置先施加状态，再由后续牌利用"
+		rule += "；先由它给敌人上状态，右边的牌再利用这个状态"
 	return rule
 
 func skill_description_short(id: String) -> String:
@@ -2422,9 +2460,9 @@ func skill_description_short(id: String) -> String:
 		if str(upgrade.id) == id:
 			return str(upgrade.desc)
 	match id:
-		"endless_damage": return "宠物后置递减乘算，最高×1.50"
-		"endless_vitality": return "4秒未受伤后持续恢复"
-		"endless_haste": return "被群敌包围且宠物尚未充满时获得迅捷"
+		"endless_damage": return "放在宠物右边，让它伤害变高，最多×1.50"
+		"endless_vitality": return "4秒没挨打就开始一直回血"
+		"endless_haste": return "宠物还没充满时你跑得更快；身边围了3个以上敌人时充能也更快"
 	return id
 
 func source_uses_core_deck(source_id: String) -> bool:
@@ -2452,8 +2490,8 @@ func calculate_skill_damage(base: float, source_id: String, target: Enemy = null
 		mastery_factor = external_factor
 		hand_factor = 1.0
 	var final_damage := result * mastery_factor * hand_factor
-	# 灼烧/寒霜必须按本次实际伤害结算。写死常数会让它们全程停在 8 点左右，
-	# 到第 6 章只剩陨星单次伤害的 18%，元素与进化路线在中后期集体失效。
+	# 燃烧/冰冻必须按本次实际伤害结算。写死常数会让它们全程停在 8 点左右，
+	# 到第 6 章只剩陨石单次伤害的 18%，元素与进化路线在中后期集体失效。
 	if source_id in CORE_SKILL_CARD_IDS and is_instance_valid(target):
 		var status_scale := skill_status_multiplier(source_id)
 		var burn_ratio := 0.0
@@ -2471,7 +2509,7 @@ func soften_damage_multiplier(raw_multiplier: float) -> float:
 	var safe_multiplier := maxf(0.1, raw_multiplier)
 	if safe_multiplier <= 8.0:
 		return safe_multiplier
-	# 超过阈值后仍保留50%边际收益，避免任何正向词条变成零收益。
+	# 超过阈值后仍保留50%边际收益，避免任何正向本领变成零收益。
 	return 8.0 + (safe_multiplier - 8.0) * 0.50
 
 func raw_damage_multiplier_from_effective(effective_multiplier: float) -> float:
@@ -2573,14 +2611,17 @@ func resolve_core_card_chain(base: float, source_id: String, target: Enemy = nul
 								multiplier *= float(copied.multiplier)
 								crit_chance = minf(0.85, crit_chance + float(copied.crit_bonus))
 				"brainstorm":
-					if not equipped_cards.is_empty():
-						var copied_id := equipped_cards[0]
-						if not copied_id in ["blueprint", "brainstorm"]:
-							var copied := copied_card_effect(copied_id, target_distance, dense_targets, target, hit_count, has_pair, has_trio)
-							if bool(copied.supported):
-								additive += float(copied.additive)
-								multiplier *= float(copied.multiplier)
-								crit_chance = minf(0.85, crit_chance + float(copied.crit_bonus))
+					# 描述承诺的是「最左侧非复制牌」。只看第 0 张的话，第 0 张一旦
+					# 是照抄类，这张牌就整局罢工——从左往右找到第一张非照抄牌才对。
+					for copied_id in equipped_cards:
+						if copied_id in ["blueprint", "brainstorm"]:
+							continue
+						var copied := copied_card_effect(copied_id, target_distance, dense_targets, target, hit_count, has_pair, has_trio)
+						if bool(copied.supported):
+							additive += float(copied.additive)
+							multiplier *= float(copied.multiplier)
+							crit_chance = minf(0.85, crit_chance + float(copied.crit_bonus))
+						break
 				"red_contract":
 					if red_contract_stacks > 0:
 						var red_factor := 1.0 + red_contract_stacks * 0.05
@@ -2621,7 +2662,7 @@ func resolve_core_card_chain(base: float, source_id: String, target: Enemy = nul
 			if did_crit:
 				crit_factor *= 1.25
 		"polychrome": multiplier *= 1.20
-	# 暴击放在软上限之外结算，保证暴击流在任何构筑强度下都是完整收益。
+	# 暴击放在软上限之外结算，保证暴击流在任何搭配强度下都是完整收益。
 	last_chain_multiplier = soften_damage_multiplier((1.0 + additive) * multiplier) * crit_factor
 	return base_result * last_chain_multiplier
 
@@ -2773,7 +2814,7 @@ func on_player_shield_blocked() -> void:
 			if active_core_skill_ids().has(defensive_pet):
 				on_pet_energy_received(defensive_pet, 0.85)
 				break
-	show_toast("星垒格挡 · 条件养成推进", Color("70d7ff"), 0.55)
+	show_toast("星垒挡住了 · 熟练度+1", Color("70d7ff"), 0.55)
 	spawn_skill_effect(player.global_position, "shield", Color("bde9ff"), 58.0)
 
 func on_player_healed(_amount: float) -> void:
@@ -2832,7 +2873,7 @@ func update_flow_pressure(delta: float) -> void:
 	if not get_tree().get_nodes_in_group("bosses").is_empty():
 		return
 	# 只用两个最易读的信号：还剩多少血、最近有没有真的被威胁到。
-	# 信号越少越难被单一构筑钻空子，也越容易解释「刚才为什么变松了」。
+	# 信号越少越难被单一搭配钻空子，也越容易解释「刚才为什么变松了」。
 	var hp_ratio := player.health / maxf(1.0, player.max_health)
 	var since_hurt := elapsed - last_hurt_elapsed
 	var comfort := clampf((hp_ratio - 0.55) / 0.35, -1.0, 1.0) * 0.6 + clampf((since_hurt - 8.0) / 16.0, -1.0, 1.0) * 0.4
@@ -2925,20 +2966,20 @@ func current_mainline_chapter() -> int:
 	return 6
 
 func chapter_theme_name(chapter: int) -> String:
-	return str({1:"追踪信号", 2:"封锁街区", 3:"裁决前线", 4:"急袭回廊", 5:"裂隙城区", 6:"终局灯塔"}.get(chapter, "深渊循环"))
+	return str({1:"追踪信号", 2:"封锁街区", 3:"守塔前线", 4:"快攻走廊", 5:"裂缝城区", 6:"最后的灯塔"}.get(chapter, "深渊循环"))
 
 func chapter_enemy_kind(chapter: int, wave := 0) -> String:
 	var weighted: Array[String] = []
 	match chapter:
-		1: weighted.assign(["追猎者", "追猎者", "追猎者", "追猎者", "疾行兽"])
-		2: weighted.assign(["追猎者", "追猎者", "追猎者", "疾行兽", "重甲怪"])
-		3: weighted.assign(["追猎者", "追猎者", "疾行兽", "重甲怪", "咒术师"])
-		4: weighted.assign(["追猎者", "疾行兽", "重甲怪", "重甲怪", "咒术师"])
-		5: weighted.assign(["疾行兽", "重甲怪", "重甲怪", "咒术师", "咒术师"])
-		_: weighted.assign(["疾行兽", "重甲怪", "重甲怪", "咒术师", "咒术师"])
+		1: weighted.assign(["追踪怪", "追踪怪", "追踪怪", "追踪怪", "飞奔怪"])
+		2: weighted.assign(["追踪怪", "追踪怪", "追踪怪", "飞奔怪", "铁甲怪"])
+		3: weighted.assign(["追踪怪", "追踪怪", "飞奔怪", "铁甲怪", "远射怪"])
+		4: weighted.assign(["追踪怪", "飞奔怪", "铁甲怪", "铁甲怪", "远射怪"])
+		5: weighted.assign(["飞奔怪", "铁甲怪", "铁甲怪", "远射怪", "远射怪"])
+		_: weighted.assign(["飞奔怪", "铁甲怪", "铁甲怪", "远射怪", "远射怪"])
 	if wave >= 6:
-		weighted.append("重甲怪")
-		weighted.append("咒术师")
+		weighted.append("铁甲怪")
+		weighted.append("远射怪")
 	return str(weighted.pick_random())
 
 func spawn_enemy(kind: String, boss := false) -> Enemy:
@@ -2964,7 +3005,7 @@ func spawn_enemy(kind: String, boss := false) -> Enemy:
 	#
 	#   按「数量」（刷怪节奏 + 场上上限）调 —— 实测减压 15% 让星屑收入掉 18%、
 	#   Boss 少清 0.6 个。敌人在这个游戏里不只是压力，它同时是玩家的资源供给
-	#   （星屑、共鸣、宠物能量、波次目标全靠击杀），减压等于把玩家变穷，
+	#   （星屑、气势、宠物能量、波次目标全靠击杀），减压等于把玩家变穷，
 	#   净效果反而害了他。只补星屑堵不住其余通道。
 	#
 	#   按「出生距离 + 接近速度」调 —— 方向对了，但减速会制造真空：实测断链
@@ -3003,19 +3044,19 @@ func check_boss_timing() -> void:
 	if endless_mode:
 		return
 	var boss_schedule := {
-		60: ["星渊追猎者", "追击型 · 冲刺逼近"],
-		120: ["星渊禁锢者", "控场型 · 陷阱封锁"],
-		180: ["星渊裁决者", "爆发型 · 蓄力齐射"],
-		240: ["星渊追猎者", "追击型 · 冲刺逼近"],
-		300: ["星渊禁锢者", "控场型 · 陷阱封锁"],
-		355: ["星渊裁决者", "爆发型 · 蓄力齐射"]
+		60: ["赫巡·追赶者", "会冲过来撞人"],
+		120: ["弥垣·关门人", "会在地上放陷阱"],
+		180: ["零号·守塔机器", "会先蓄力再放大招"],
+		240: ["赫巡·追赶者", "会冲过来撞人"],
+		300: ["弥垣·关门人", "会在地上放陷阱"],
+		355: ["零号·守塔机器", "会先蓄力再放大招"]
 	}
 	for mark in boss_schedule:
 		var chapter := MAINLINE_BOSS_SCHEDULE.find(mark) + 1
 		var story_profile := chapter_story_profile(chapter)
 		if elapsed >= mark - 2.0 and not boss_warned.has(mark) and not boss_spawned.has(mark):
 			boss_warned[mark] = true
-			show_toast("%s\n不祥的气息正在逼近……" % str(story_profile.title), Color("ef7791"), 1.8)
+			show_toast("%s\n有很厉害的家伙要来了……" % str(story_profile.title), Color("ef7791"), 1.8)
 			play_boss_warning_sound()
 		if elapsed >= mark and not boss_spawned.has(mark):
 			boss_spawned[mark] = true
@@ -3029,7 +3070,7 @@ func check_boss_timing() -> void:
 			boss.set_affixes(roll_boss_affixes(chapter, boss.boss_style))
 			apply_luchador_counter(boss)
 			award_boss_affix_achievements(boss.affixes)
-			show_toast("%s\n%s\n%s" % [str(story_profile.boss), boss_character_reply(chapter, player.character_name), "词条：" + boss.affix_summary()], Color("facc15"), 3.8)
+			show_toast("%s\n%s\n%s" % [str(story_profile.boss), boss_character_reply(chapter, player.character_name), "本领：" + boss.affix_summary()], Color("facc15"), 3.8)
 			shake_camera(12.0)
 
 func check_boss_story_beats(active_bosses: Array) -> void:
@@ -3052,9 +3093,9 @@ func next_boss_time() -> String:
 	return "已降临"
 
 func spawn_endless_boss() -> void:
-	var boss_types := ["星渊追猎者", "星渊禁锢者", "星渊裁决者"]
+	var boss_types := ["赫巡·追赶者", "弥垣·关门人", "零号·守塔机器"]
 	var boss_index := int(endless_wave / 3.0 - 1.0) % boss_types.size()
-	show_toast("无尽深处传来不祥回响……", Color("ef7791"), 1.2)
+	show_toast("更深的地方传来了怪声音……", Color("ef7791"), 1.2)
 	play_boss_warning_sound()
 	if not await game_delay(0.85):
 		return
@@ -3068,7 +3109,7 @@ func spawn_endless_boss() -> void:
 	boss.set_affixes(roll_boss_affixes(6 + int(floor(maxi(0, endless_wave - 1) / 6.0)), boss.boss_style))
 	apply_luchador_counter(boss)
 	award_boss_affix_achievements(boss.affixes)
-	show_toast("无尽 Boss · %s\n词条：%s" % [boss.kind, boss.affix_summary()], Color("f472b6"), 2.7)
+	show_toast("无尽首领 · %s\n本领：%s" % [boss.kind, boss.affix_summary()], Color("f472b6"), 2.7)
 	shake_camera(12.0)
 
 func weighted_affix_pick(weighted_ids: Array[String], excluded: Array[String] = []) -> String:
@@ -3121,7 +3162,7 @@ func roll_boss_affixes(chapter := 1, boss_style := "") -> Array[String]:
 		result.append(disruption_id)
 	if active_vouchers.has("counter_license") and randf() < 0.35:
 		result.remove_at(randi_range(0, result.size() - 1))
-		show_toast("破咒执照生效 · 本次Boss少获得一个词条", Color("4ade80"), 1.2)
+		show_toast("少一个本领生效 · 本次首领少获得一个本领", Color("4ade80"), 1.2)
 	return result
 
 func apply_luchador_counter(boss: Enemy) -> void:
@@ -3131,7 +3172,7 @@ func apply_luchador_counter(boss: Enemy) -> void:
 	boss.affixes.erase(removed_affix)
 	equipped_cards.erase("luchador")
 	remove_slot_card_effect("luchador")
-	show_toast("破咒面具献祭 · 已取消Boss词条【%s】" % str(BOSS_AFFIXES.filter(func(item): return str(item.id) == removed_affix)[0].name), Color("4ade80"), 2.0)
+	show_toast("破解面具用掉了 · 首领少了一个本领【%s】" % str(BOSS_AFFIXES.filter(func(item): return str(item.id) == removed_affix)[0].name), Color("4ade80"), 2.0)
 	update_deck_card_row()
 
 func on_boss_affix_requested(source, effect_id: String, duration: float) -> void:
@@ -3139,16 +3180,16 @@ func on_boss_affix_requested(source, effect_id: String, duration: float) -> void
 		return
 	if effect_id in ["sealed_hand", "pet_thief", "pet_charm", "reverse_shuffle"] and cleanse_ward_charges > 0:
 		cleanse_ward_charges -= 1
-		show_toast("净化屏障生效 · 已抵消%s" % affix_display_name(effect_id), Color("4ade80"), 1.5)
+		show_toast("保护罩挡掉了 · %s" % affix_display_name(effect_id), Color("4ade80"), 1.5)
 		spawn_skill_effect(source.global_position, "shield", Color("4ade80"), 96.0)
 		return
 	boss_affix_pending = true
-	var warning := "Boss正在改写卡组"
+	var warning := "首领正在改写卡组"
 	match effect_id:
-		"sealed_hand": warning = "封印预警 · 击败5名敌人可提前解除"
-		"pet_thief": warning = "窃宠预警 · 接近被盗宠物可提前夺回"
-		"pet_charm": warning = "魅惑预警 · 接近倒戈宠物可净化"
-		"reverse_shuffle": warning = "洗牌预警 · 卡牌顺序即将暂时反转"
+		"sealed_hand": warning = "小心：要封你的牌了 · 打倒5个敌人可以提前解开"
+		"pet_thief": warning = "小心：要抢宠物了 · 跑到被抢的宠物旁边能提前抢回来"
+		"pet_charm": warning = "小心：要迷惑宠物了 · 跑到它旁边能叫醒它"
+		"reverse_shuffle": warning = "小心：卡牌顺序要倒过来了"
 	show_toast(warning, Color("f472b6"), 1.35)
 	spawn_skill_effect(source.global_position, "gravity", Color("f472b6"), 92.0)
 	resolve_boss_affix_after_warning(source, effect_id, duration)
@@ -3207,7 +3248,7 @@ func apply_boss_card_seal(source, duration: float) -> void:
 		return
 	var card_id: String = candidates.pick_random()
 	boss_card_disruptions[card_id] = {"mode":"sealed", "remaining":duration, "source":source, "start_kills":kills}
-	show_toast("封印契约：%s 暂时失效\n击败5名敌人可提前解除" % card_display_name(card_id), Color("f472b6"), 1.8)
+	show_toast("首领封住了：%s\n打倒5个敌人就能提前解开" % card_display_name(card_id), Color("f472b6"), 1.8)
 	refresh_skill_entities()
 	update_deck_card_row()
 
@@ -3218,7 +3259,7 @@ func apply_boss_pet_theft(source, duration: float) -> void:
 		return
 	var card_id: String = candidates.pick_random()
 	boss_card_disruptions[card_id] = {"mode":"stolen", "remaining":duration, "source":source, "shot_timer":99.0, "rescue_delay":1.15}
-	show_toast("星渊窃宠：%s 被Boss夺走\n接近宠物即可提前夺回" % card_display_name(card_id), Color("ef7791"), 1.9)
+	show_toast("偷走宠物：%s 被首领夺走\n接近宠物即可提前夺回" % card_display_name(card_id), Color("ef7791"), 1.9)
 	refresh_skill_entities()
 	update_deck_card_row()
 
@@ -3229,7 +3270,7 @@ func apply_boss_pet_charm(source, duration: float) -> void:
 		return
 	var card_id: String = candidates.pick_random()
 	boss_card_disruptions[card_id] = {"mode":"charmed", "remaining":duration, "source":source, "shot_timer":0.9, "rescue_delay":1.15}
-	show_toast("倒戈魅惑：%s 暂时叛变\n靠近它即可提前净化" % card_display_name(card_id), Color("f0abfc"), 1.9)
+	show_toast("迷惑宠物：%s 暂时叛变\n靠近它即可提前净化" % card_display_name(card_id), Color("f0abfc"), 1.9)
 	refresh_skill_entities()
 	update_deck_card_row()
 
@@ -3240,7 +3281,7 @@ func apply_boss_reverse_shuffle(source, duration: float) -> void:
 	boss_shuffle_remaining = duration
 	boss_shuffle_source = source
 	equipped_cards.reverse()
-	show_toast("逆序洗牌：卡牌结算顺序已反转\n%.1f秒后恢复" % duration, Color("facc15"), 1.8)
+	show_toast("卡牌顺序被倒过来了\n%.1f秒后恢复" % duration, Color("facc15"), 1.8)
 	update_deck_card_row()
 
 func update_boss_card_disruptions(delta: float) -> void:
@@ -3271,7 +3312,7 @@ func update_boss_card_disruptions(delta: float) -> void:
 			boss_card_disruptions.erase(card_id)
 			if str(card_seals.get(card_id, "")) == "white":
 				gain_resonance(20.0)
-		show_toast("卡牌与宠物控制已恢复", Color("4ade80"), 1.0)
+		show_toast("卡牌和宠物恢复正常了", Color("4ade80"), 1.0)
 		refresh_skill_entities()
 		update_deck_card_row()
 	if boss_shuffle_remaining > 0.0:
@@ -3319,10 +3360,10 @@ func boss_disruption_summary() -> String:
 	var parts: Array[String] = []
 	for card_id in boss_card_disruptions:
 		var record: Dictionary = boss_card_disruptions[card_id]
-		var mode_name: String = str({"sealed":"封印", "stolen":"被盗", "charmed":"魅惑"}.get(str(record.get("mode", "sealed")), "干扰"))
+		var mode_name: String = str({"sealed":"被封住", "stolen":"被抢走", "charmed":"被迷惑"}.get(str(record.get("mode", "sealed")), "被捣乱"))
 		parts.append("%s:%s %.1fs" % [mode_name, card_display_name(str(card_id)), float(record.get("remaining", 0.0))])
 	if boss_shuffle_remaining > 0.0:
-		parts.append("逆序洗牌 %.1fs" % boss_shuffle_remaining)
+		parts.append("卡牌倒转 %.1fs" % boss_shuffle_remaining)
 	return "  ·  ".join(parts)
 
 func spawn_boss_hazard(position: Vector2, damage: float, radius: float) -> void:
@@ -3417,7 +3458,7 @@ func energy_amount_for_pet(id: String) -> float:
 	var amount := float(stats.get("energy_power", 1.0))
 	match player.character_name:
 		"游侠": amount *= 1.22
-		"星术师": amount *= 1.24
+		"魔法师": amount *= 1.24
 		"守卫":
 			if guardian_stationary_time >= 1.2:
 				amount *= 1.35
@@ -3447,7 +3488,7 @@ func try_release_charged_pets() -> void:
 		try_release_charged_pet(id)
 
 func pet_consumes_resonance(id: String) -> bool:
-	# 引力奇点现在会造成范围伤害，和其它输出宠物一样支付共鸣；只有星辉壁垒是纯防御。
+	# 吸怪黑洞现在会造成范围伤害，和其它输出宠物一样支付气势；只有护盾罩是纯防御。
 	return id in CORE_SKILL_CARD_IDS and id != "aegis"
 
 func try_release_charged_pet(id: String) -> bool:
@@ -3541,7 +3582,7 @@ func cut_pet_tether(id: String, enemy) -> void:
 			away = away.normalized().lerp((entity.global_position - enemy.global_position).normalized(), 0.5)
 		entity.global_position = player.global_position + away.normalized() * TETHER_SNAP_RECOIL
 		spawn_skill_effect(entity.global_position, "sever", entity.entity_color(), 46.0)
-	show_toast("供能链条被切断 · %s 停摆
+	show_toast("充能链条被切断 · %s 停摆
 走过去重新接上它" % card_display_name(id), Color("ef7791"), 1.4)
 	play_tone(180.0, 0.12, 0.16)
 	shake_camera(4.0)
@@ -3574,35 +3615,35 @@ func active_star_patterns() -> Array[String]:
 		var tag := card_build_type(id)
 		build_counts[tag] = int(build_counts.get(tag, 0)) + 1
 	for count_value in build_counts.values():
-		if int(count_value) >= 2 and not patterns.has("双生式"):
-			patterns.append("双生式")
-		if int(count_value) >= 3 and not patterns.has("三相式"):
-			patterns.append("三相式")
+		if int(count_value) >= 2 and not patterns.has("两张同类"):
+			patterns.append("两张同类")
+		if int(count_value) >= 3 and not patterns.has("三张同类"):
+			patterns.append("三张同类")
 	if is_card_active("burn") and is_card_active("frost_brand") and is_card_active("thunder_orb") and is_card_active("gravity_well"):
-		patterns.append("四象式")
+		patterns.append("四种元素")
 	for index in equipped_cards.size():
 		var id := equipped_cards[index]
 		if id in CORE_SKILL_CARD_IDS and not is_card_suppressed(id):
 			if index > 0 and not is_card_suppressed(equipped_cards[index - 1]) and card_build_type(equipped_cards[index - 1]) == "技能改造":
-				if not patterns.has("邻接式"): patterns.append("邻接式")
+				if not patterns.has("紧挨宠物"): patterns.append("紧挨宠物")
 			if index + 1 < equipped_cards.size() and not is_card_suppressed(equipped_cards[index + 1]) and card_build_type(equipped_cards[index + 1]) == "技能改造":
-				if not patterns.has("邻接式"): patterns.append("邻接式")
+				if not patterns.has("紧挨宠物"): patterns.append("紧挨宠物")
 			if index > 0 and index + 1 < equipped_cards.size() and not is_card_suppressed(equipped_cards[index - 1]) and not is_card_suppressed(equipped_cards[index + 1]) and card_build_type(equipped_cards[index - 1]) == card_build_type(equipped_cards[index + 1]):
-				if not patterns.has("镜像式"): patterns.append("镜像式")
+				if not patterns.has("左右对称"): patterns.append("左右对称")
 			if index + 1 < equipped_cards.size() and equipped_cards[index + 1] in CORE_SKILL_CARD_IDS and not is_card_suppressed(equipped_cards[index + 1]):
-				if not patterns.has("双核式"): patterns.append("双核式")
+				if not patterns.has("两只宠物"): patterns.append("两只宠物")
 	var effective_count := effective_equipped_card_count()
 	if effective_count <= 3 and effective_count > 0:
-		patterns.append("孤注式")
+		patterns.append("牌很少")
 	if effective_count == MAX_CARD_SLOTS and equipped_cards.size() == MAX_CARD_SLOTS and build_counts.size() >= 5:
-		patterns.append("满庭式")
+		patterns.append("牌全满")
 	if has_valid_sequence_protocol():
-		patterns.append("顺序式")
-	if star_bridge_hands > 0 and not patterns.has("双核式"):
-		patterns.append("双核式")
+		patterns.append("四连排")
+	if star_bridge_hands > 0 and not patterns.has("两只宠物"):
+		patterns.append("两只宠物")
 	var active_bosses := get_tree().get_nodes_in_group("bosses")
 	if not active_bosses.is_empty() and active_bosses[0].weakness_time > 0.0 and effective_count >= 3:
-		patterns.append("反制式")
+		patterns.append("破绽时刻")
 	return patterns
 
 func has_valid_sequence_protocol() -> bool:
@@ -3629,9 +3670,9 @@ func active_hand_energy(patterns: Array[String]) -> int:
 	var energy := 18 + effective_equipped_card_count() * 5 + active_core_count * 7
 	for pattern in patterns:
 		match pattern:
-			"四象式", "满庭式": energy += 24
-			"顺序式", "镜像式", "双核式", "反制式": energy += 16
-			"三相式": energy += 12
+			"四种元素", "牌全满": energy += 24
+			"四连排", "左右对称", "两只宠物", "破绽时刻": energy += 16
+			"三张同类": energy += 12
 			_: energy += 8
 		energy += int(pattern_mastery.get(pattern, 0)) * 6
 	return energy
@@ -3645,7 +3686,7 @@ func gain_resonance(amount: float) -> void:
 func cast_core_pet_from_hand(id: String, orbit_group_cast: bool) -> bool:
 	match id:
 		"aura":
-			if has_aura and has_enemy_in_effect_radius(skill_entity_origin(id), aura_radius * skill_area_multiplier(id)):
+			if has_aura and has_enemy_in_effect_radius(skill_entity_origin(id), pet_effect_radius(id)):
 				fire_aura(); return true
 		"orbit", "satellite_engine", "blade_dance":
 			if not orbit_group_cast and has_orbit and has_enemy_in_range_from(skill_entity_origin(id), 210.0):
@@ -3654,7 +3695,7 @@ func cast_core_pet_from_hand(id: String, orbit_group_cast: bool) -> bool:
 			if chain_level > 0 and nearest_enemy_from(skill_entity_origin(id), MAX_ENGAGE_RANGE) != null:
 				fire_chain_lightning(); return true
 		"nova":
-			if nova_level > 0 and has_enemy_in_effect_radius(skill_entity_origin(id), (115.0 + nova_level * 18.0) * skill_area_multiplier(id)):
+			if nova_level > 0 and has_enemy_in_effect_radius(skill_entity_origin(id), pet_effect_radius(id)):
 				fire_nova(); return true
 		"phase_step":
 			if phase_step_enabled and phase_step_cooldown <= 0.0 and nearest_enemy_from(skill_entity_origin(id), 300.0) != null:
@@ -3693,7 +3734,7 @@ func fire_execute() -> bool:
 				target = node
 	if is_instance_valid(target):
 		release_skill_entity("execute", target.global_position)
-		spawn_skill_effect(target.global_position, "sever", pet_color("execute"), 42.0)
+		spawn_skill_effect(target.global_position, "reap", pet_color("execute"), 42.0)
 		deal_skill_damage(target, calculate_skill_damage(26.0, "execute", target), "execute", Vector2.ZERO, "execute")
 		if target.health <= 0.0:
 			record_core_mastery("execute")
@@ -3739,7 +3780,33 @@ func update_conditional_card_effects(delta: float) -> void:
 	if equipped_cards.has("endless_vitality") and not is_card_suppressed("endless_vitality") and elapsed - last_hurt_elapsed >= 4.0 and player.health < player.max_health:
 		player.heal(0.15 * mini(10, int(upgrade_levels.get("endless_vitality", 0))) * delta)
 
+func pet_effect_radius(id: String) -> float:
+	# 画圈宠物的实际判定半径。索敌、伤害判定、特效圈过去各写一遍同样的算式，
+	# 收成一处以后「买了加范围的东西 → 圈变大」这件事只有一个来源。
+	match id:
+		"aura": return aura_radius * skill_area_multiplier(id)
+		"nova": return (115.0 + nova_level * 18.0) * skill_area_multiplier(id)
+		"thunder_orb":
+			var thunder_radius := (72.0 + thunder_level * 10.0) * skill_area_multiplier(id)
+			if active_relics.has("storm_relay"):
+				thunder_radius *= 1.0 + 0.25 * relic_rank("storm_relay")
+			return thunder_radius
+		"gravity_well": return 220.0 * skill_area_multiplier(id)
+		"meteor_rain": return 105.0 * skill_area_multiplier(id)
+	return 0.0
+
+func flash_area_growth() -> void:
+	# 加范围的东西买下之后，把受影响宠物的新范围原地画一遍。
+	# 孩子看到哪几只的圈当场变大，就不必再用文字去解释「哪些宠物吃范围」。
+	for id in active_core_skill_ids():
+		if id in AREA_SCALING_PETS:
+			spawn_skill_effect(skill_entity_origin(id), "field", pet_color(id), pet_effect_radius(id))
+
 func skill_area_multiplier(source_id: String) -> float:
+	# 名单之外的宠物范围固定。过去这里不拦，回声版本的特效圈会跟着 stats.area 变大，
+	# 而它的伤害其实是照抄的固定 55%，视觉比实际大一圈。
+	if not source_id in AREA_SCALING_PETS:
+		return 1.0
 	var result := float(stats.area) * core_mastery_area_factor(source_id)
 	if source_id == "gravity_well" and active_relics.has("rift_compass"):
 		result *= 1.0 + 0.35 * relic_rank("rift_compass")
@@ -3756,7 +3823,7 @@ func nearest_enemy(range_limit := MAX_ENGAGE_RANGE) -> Enemy:
 
 func preferred_enemy_from(origin: Vector2, range_limit := MAX_ENGAGE_RANGE) -> Enemy:
 	range_limit = minf(range_limit, MAX_ENGAGE_RANGE)
-	# Boss 在场时优先咬 Boss：否则 AoE 构筑的伤害会被杂兵全部吸走。
+	# Boss 在场时优先咬 Boss：否则 AoE 搭配的伤害会被杂兵全部吸走。
 	for boss in get_tree().get_nodes_in_group("bosses"):
 		if is_instance_valid(boss) and origin.distance_to(boss.global_position) <= range_limit + boss.radius:
 			return boss
@@ -3776,7 +3843,7 @@ func nearest_enemy_from(origin: Vector2, range_limit := MAX_ENGAGE_RANGE) -> Ene
 	return closest
 
 func fire_pulse() -> void:
-	# 供能不再是发射弹丸，而是沿链条连续注入。这里按一个「脉冲」的额度结算，
+	# 充能不再是发射弹丸，而是沿链条连续注入。这里按一个「脉冲」的额度结算，
 	# 总吞吐与原来一致（每次额度 = 原来一枚弹的能量），只是不再有飞行物。
 	var targets := selectable_energy_pet_ids()
 	if targets.is_empty():
@@ -3803,7 +3870,7 @@ func fire_lone_star_spark() -> bool:
 	var target := nearest_enemy_from(player.global_position, MAX_ENGAGE_RANGE)
 	if not is_instance_valid(target):
 		return false
-	# 独立的低强度保底：不读取卡牌链、暴击、版本、共鸣、封印与养成。
+	# 独立的低强度保底：不读取卡牌链、暴击、版本、气势、封印与养成。
 	var damage := 3.2 * float(stats.damage)
 	target.take_damage(damage, (target.global_position - player.global_position).normalized() * 18.0, "lone_star")
 	spawn_skill_effect(target.global_position, "cast", Color("70d7ff"), 34.0)
@@ -3815,7 +3882,7 @@ func deal_skill_damage(target: Enemy, amount: float, source_id: String, knockbac
 		return
 	# 记录本次伤害的来源宠物，让飘字与击杀特效能标出「是谁打的」
 	last_damage_color = pet_color(source_id) if source_id in CORE_SKILL_CARD_IDS else Color("e8f5ff")
-	# 在所有反应倍率完成后再快照，回响才能复现最终实际伤害。
+	# 在所有反应倍数完成后再快照，回声才能复现最终实际伤害。
 	if echo_damage_captures.has(source_id):
 		var captured: Array = echo_damage_captures[source_id]
 		captured.append({"target":target, "damage":amount})
@@ -3823,9 +3890,9 @@ func deal_skill_damage(target: Enemy, amount: float, source_id: String, knockbac
 
 func fire_aura() -> void:
 	var origin := skill_entity_origin("aura")
-	var target := nearest_enemy_from(origin, aura_radius * skill_area_multiplier("aura") + 45.0)
+	var target := nearest_enemy_from(origin, pet_effect_radius("aura") + 45.0)
 	release_skill_entity("aura", target.global_position if is_instance_valid(target) else origin)
-	var radius := aura_radius * skill_area_multiplier("aura")
+	var radius := pet_effect_radius("aura")
 	spawn_skill_effect(origin, "field", pet_color("aura"), radius)
 	var hit_count := 0
 	for node in get_tree().get_nodes_in_group("enemies"):
@@ -3849,7 +3916,7 @@ func fire_orbit_damage(source_id := "") -> bool:
 	var satellite_bonus := int(floor(core_mastery_rank("satellite_engine") / 2.0)) if is_card_active("satellite_engine") else 0
 	var effective_orbit_count := maxi(1, orbit_count + orbit_bonus + satellite_bonus)
 	var orbit_radius := 104.0 + core_mastery_rank("blade_dance") * 4.0
-	# 同上：卫星相位改用本局游戏时钟，避免命中判定随真实帧率漂移。
+	# 同上：卫星闪冲改用本局游戏时钟，避免命中判定随真实帧率漂移。
 	var spin := elapsed * (2.2 + core_mastery_rank("blade_dance") * 0.12)
 	for i in effective_orbit_count:
 		positions.append(origin + Vector2.from_angle(spin + TAU * i / effective_orbit_count) * orbit_radius)
@@ -3876,7 +3943,7 @@ func fire_orbit_damage(source_id := "") -> bool:
 		var orbit_damage := calculate_skill_damage(6.0 + float(effective_orbit_count) * 2.5 + active_blade_level * 7.0, orbit_source, node)
 		if evolutions.has("stellar_lattice") and node.consume_resonance():
 			orbit_damage *= 2.25
-		if active_combo_names().has("瞬身刃舞") and active_blade_level > 0 and node.consume_phase_mark():
+		if active_combo_names().has("闪冲飞刀") and active_blade_level > 0 and node.consume_phase_mark():
 			orbit_damage *= 2.0
 			spawn_skill_effect(node.global_position, "dash", Color("70f0ff"), 70.0)
 		deal_skill_damage(node, orbit_damage, orbit_source, Vector2.ZERO, "reaction")
@@ -3906,7 +3973,7 @@ func fire_chain_lightning() -> void:
 		deal_skill_damage(current, calculate_skill_damage(12.0 + chain_level * 3.0, "chain", current), "chain", Vector2.ZERO, "chain")
 		if evolutions.has("molten_circuit"):
 			current.apply_shock()
-		if active_combo_names().has("风暴导体"):
+		if active_combo_names().has("雷电接力"):
 			current.apply_conductive()
 		var next: Enemy
 		var best := INF
@@ -3924,15 +3991,15 @@ func fire_chain_lightning() -> void:
 
 func fire_nova() -> void:
 	var origin := skill_entity_origin("nova")
-	var target := nearest_enemy_from(origin, (115.0 + nova_level * 18.0) * skill_area_multiplier("nova") + 45.0)
+	var target := nearest_enemy_from(origin, pet_effect_radius("nova") + 45.0)
 	release_skill_entity("nova", target.global_position if is_instance_valid(target) else origin)
-	var radius := (115.0 + nova_level * 18.0) * skill_area_multiplier("nova")
+	var radius := pet_effect_radius("nova")
 	var hit_count := 0
 	for node in get_tree().get_nodes_in_group("enemies"):
 		if is_instance_valid(node) and origin.distance_to(node.global_position) <= radius + node.radius:
 			hit_count += 1
 			var nova_damage := calculate_skill_damage(26.0 + nova_level * 6.0, "nova", node)
-			if active_combo_names().has("坍缩爆心"):
+			if active_combo_names().has("聚怪爆炸"):
 				var collapse: int = node.consume_collapse()
 				if collapse > 0:
 					nova_damage *= 1.0 + minf(0.8, collapse * 0.10)
@@ -3940,7 +4007,9 @@ func fire_nova() -> void:
 			deal_skill_damage(node, nova_damage, "nova", (node.global_position - origin).normalized() * 180.0, "reaction")
 	if hit_count >= 4:
 		record_core_mastery("nova")
-	show_toast("星核爆破", Color("facc15"), 0.35)
+	# 提示条全局只有一个，后写的会直接顶掉前一条。宠物每 1~2 秒就放一次技能，
+	# 这里原本每次都打一行技能名，等于把「首领封住了你的牌」「过关结算」「链条被切断」
+	# 这类真正要读的提示反复冲掉。技能本身已经有特效和音效，名字条删掉。
 	spawn_skill_effect(origin, "field", pet_color("nova"), radius)
 	play_tone(240.0, 0.12, 0.18)
 
@@ -3949,23 +4018,20 @@ func fire_thunder_orb() -> void:
 	if target == null:
 		return
 	release_skill_entity("thunder_orb", target.global_position)
-	var radius := (72.0 + thunder_level * 10.0) * skill_area_multiplier("thunder_orb")
-	if active_relics.has("storm_relay"):
-		radius *= 1.0 + 0.25 * relic_rank("storm_relay")
-	var conducted := active_combo_names().has("风暴导体") and target.consume_conductive()
-	var mastery_target := target.is_boss or target.kind in ["重甲怪", "咒术师"]
+	var radius := pet_effect_radius("thunder_orb")
+	var conducted := active_combo_names().has("雷电接力") and target.consume_conductive()
+	var mastery_target := target.is_boss or target.kind in ["铁甲怪", "远射怪"]
 	var hit_count := 0
 	if conducted:
 		radius *= 1.45
 	for node in get_tree().get_nodes_in_group("enemies"):
 		if is_instance_valid(node) and node.global_position.distance_to(target.global_position) <= radius + node.radius:
 			hit_count += 1
-			mastery_target = mastery_target or node.is_boss or node.kind in ["重甲怪", "咒术师"]
+			mastery_target = mastery_target or node.is_boss or node.kind in ["铁甲怪", "远射怪"]
 			var thunder_damage := calculate_skill_damage(22.0 + thunder_level * 6.0, "thunder_orb", node) * (1.55 if conducted else 1.0)
 			deal_skill_damage(node, thunder_damage, "thunder_orb", Vector2.ZERO, "reaction" if conducted else "thunder")
 	if mastery_target or hit_count >= 3:
 		record_core_mastery("thunder_orb")
-	show_toast("雷暴法球", Color("70d7ff"), 0.28)
 	spawn_skill_effect(target.global_position, "thunder", pet_color("thunder_orb"), radius)
 	play_tone(760.0, 0.06, 0.1)
 
@@ -3974,7 +4040,7 @@ func fire_gravity_well() -> void:
 	if target == null:
 		return
 	release_skill_entity("gravity_well", target.global_position)
-	var gravity_radius := 220.0 * skill_area_multiplier("gravity_well")
+	var gravity_radius := pet_effect_radius("gravity_well")
 	var pulled_count := 0
 	var pull_factor := 1.0 + core_mastery_rank("gravity_well") * 0.10
 	for node in get_tree().get_nodes_in_group("enemies"):
@@ -3982,11 +4048,10 @@ func fire_gravity_well() -> void:
 			pulled_count += 1
 			node.knockback += (target.global_position - node.global_position).normalized() * (130.0 + gravity_level * 55.0) * pull_factor
 			deal_skill_damage(node, calculate_skill_damage(11.0 + gravity_level * 4.0, "gravity_well", node), "gravity_well", Vector2.ZERO, "reaction")
-			if active_combo_names().has("坍缩爆心"):
+			if active_combo_names().has("聚怪爆炸"):
 				node.apply_collapse(1)
 	if pulled_count >= 5:
 		record_core_mastery("gravity_well")
-	show_toast("引力奇点", Color("c084fc"), 0.3)
 	spawn_skill_effect(target.global_position, "gravity", pet_color("gravity_well"), gravity_radius)
 
 func fire_meteor_rain() -> void:
@@ -3994,19 +4059,18 @@ func fire_meteor_rain() -> void:
 	if target == null:
 		return
 	release_skill_entity("meteor_rain", target.global_position)
-	var meteor_radius := 105.0 * skill_area_multiplier("meteor_rain")
+	var meteor_radius := pet_effect_radius("meteor_rain")
 	var hit_count := 0
 	for node in get_tree().get_nodes_in_group("enemies"):
 		if is_instance_valid(node) and node.global_position.distance_to(target.global_position) < meteor_radius + node.radius:
 			hit_count += 1
 			var meteor_damage := calculate_skill_damage(31.0 + meteor_level * 9.0, "meteor_rain", node)
-			if active_combo_names().has("极寒天火") and node.consume_frost():
+			if active_combo_names().has("冰火组合") and node.consume_frost():
 				meteor_damage *= 1.7
 				spawn_skill_effect(node.global_position, "nova", Color("93c5fd"), 68.0)
 			deal_skill_damage(node, meteor_damage, "meteor_rain", Vector2.ZERO, "reaction")
 	if hit_count >= 4:
 		record_core_mastery("meteor_rain")
-	show_toast("陨星坠落", Color("ffbd69"), 0.35)
 	spawn_skill_effect(target.global_position, "meteor", pet_color("meteor_rain"), meteor_radius)
 
 func use_phase_step() -> void:
@@ -4030,11 +4094,10 @@ func use_phase_step() -> void:
 		if is_instance_valid(node) and node.global_position.distance_to(Geometry2D.get_closest_point_to_segment(node.global_position, old_position, destination)) < 38.0 + node.radius:
 			hit_count += 1
 			deal_skill_damage(node, calculate_skill_damage(26.0, "phase_step", node), "phase_step", direction * 90.0, "phase")
-			if active_combo_names().has("瞬身刃舞"):
+			if active_combo_names().has("闪冲飞刀"):
 				node.apply_phase_mark()
 	if hit_count >= 2:
 		record_core_mastery("phase_step")
-	show_toast("相位突进 · 供能释放", Color("70f0ff"), 0.7)
 
 func calculate_damage(base: float) -> float:
 	var result := base * float(stats.damage)
@@ -4084,11 +4147,11 @@ func on_enemy_defeated(enemy: Enemy, value: int) -> void:
 			surge_pulses = 2
 			player.heal(8.0)
 			award_achievement("streak_master")
-			show_toast("连杀节拍！恢复8生命 · 下2枚供能弹强化", Color("facc15"), 1.2)
+			show_toast("连杀！回8点血 · 接下来2发能量弹更强", Color("facc15"), 1.2)
 	kills += 1
 	if soul_siphon_level > 0 and randf() < 0.08 * soul_siphon_level:
 		player.heal(3.0)
-		show_toast("灵魂汲取", Color("4ade80"), 0.35)
+		show_toast("回血", Color("4ade80"), 0.35)
 	if randf() < 0.045 + float(stats.luck):
 		spawn_pickup("heal", 18, death_position + Vector2(-18, 0))
 	if enemy.is_boss:
@@ -4111,7 +4174,7 @@ func on_enemy_defeated(enemy: Enemy, value: int) -> void:
 					pattern_mastery[pattern] = mini(3, int(pattern_mastery.get(pattern, 0)) + 1)
 					completed_research += 1
 				if completed_research > 0:
-					show_toast("蓝蜡封研究 · 完成%d次星式研究" % completed_research, Color("70d7ff"), 1.0)
+					show_toast("蓝贴纸 · 帮你练熟了%d个阵型" % completed_research, Color("70d7ff"), 1.0)
 		clear_boss_card_disruptions(enemy)
 		boss_kills += 1
 		if enemy.has_meta("spawn_elapsed") and run_boss_ttk.size() < RUN_SLICE_LIMIT:
@@ -4121,11 +4184,11 @@ func on_enemy_defeated(enemy: Enemy, value: int) -> void:
 		player.armor += BOSS_CLEAR_ARMOR
 		var boss_heal := player.max_health * BOSS_CLEAR_HEAL
 		player.heal(boss_heal)
-		show_toast("关卡结算 · 最大生命 +%d · 护甲 +%d · 恢复 %d 生命" % [int(BOSS_CLEAR_MAX_HEALTH), int(BOSS_CLEAR_ARMOR), int(boss_heal)], Color("4ade80"), 1.4)
+		show_toast("过关 · 血上限 +%d · 护甲 +%d · 回了 %d 点血" % [int(BOSS_CLEAR_MAX_HEALTH), int(BOSS_CLEAR_ARMOR), int(boss_heal)], Color("4ade80"), 1.4)
 		campfire_stacks = 0
 		award_boss_achievements(enemy)
 		call_deferred("show_boss_reward", enemy.kind, story_chapter)
-		show_toast("%s已击败 · 战利品宝箱开启" % enemy.kind, Color("facc15"))
+		show_toast("打倒了%s · 宝箱打开" % enemy.kind, Color("facc15"))
 		play_tone(880, 0.2, 0.25)
 		if not endless_mode and boss_kills >= 6:
 			mainline_completion_pending = true
@@ -4134,9 +4197,9 @@ func award_boss_achievements(boss: Enemy) -> void:
 	var boss_name := str(boss.kind)
 	award_achievement("boss_breaker")
 	match boss_name:
-		"星渊追猎者": award_achievement("chaser_breaker")
-		"星渊禁锢者": award_achievement("warden_breaker")
-		"星渊裁决者": award_achievement("judge_breaker")
+		"赫巡·追赶者": award_achievement("chaser_breaker")
+		"弥垣·关门人": award_achievement("warden_breaker")
+		"零号·守塔机器": award_achievement("judge_breaker")
 	var damage_at_spawn := float(boss.get_meta("damage_taken_at_spawn", damage_taken_this_run))
 	if damage_taken_this_run <= damage_at_spawn + 0.001:
 		award_achievement("flawless_boss")
@@ -4149,7 +4212,7 @@ func award_boss_achievements(boss: Enemy) -> void:
 func roll_enemy_shard_reward(is_boss: bool, enemy_kind: String = "") -> int:
 	if is_boss:
 		return 6 + int(floor(boss_kills * 0.75))
-	if enemy_kind in ["重甲怪", "咒术师"]:
+	if enemy_kind in ["铁甲怪", "远射怪"]:
 		return 2
 	var drop_chance := clampf(0.36 - float(current_mainline_chapter()) * 0.035, 0.14, 0.36) + clampf(float(stats.get("luck", 0.0)), 0.0, 0.12)
 	return 1 if randf() < drop_chance else 0
@@ -4173,7 +4236,7 @@ func show_boss_reward(_boss_name: String, story_chapter := 0) -> void:
 	box.size = Vector2(1080, 600)
 	box.add_theme_constant_override("separation", 10)
 	boss_reward_overlay.add_child(box)
-	var title := make_label("Boss 战利品宝箱  ·  选择一件稀有战利品", 34, Color("facc15"))
+	var title := make_label("首领宝箱  ·  挑一件宝物带走", 34, Color("facc15"))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(title)
 	var memory := boss_memory_for_chapter(story_chapter)
@@ -4186,7 +4249,11 @@ func show_boss_reward(_boss_name: String, story_chapter := 0) -> void:
 	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	row.add_theme_constant_override("separation", 18)
 	box.add_child(row)
-	var pool: Array = BOSS_RELICS.filter(func(relic): return relic_rank(str(relic.id)) < 3)
+		# 一只画圈的宠物都没有时，指路罗盘对玩家毫无作用，直接不摆进宝箱：
+	# 「买了没用」这件事根本不出现，就不需要任何说明去防它。宝箱不足三件时
+	# 下面本来就会用宠物版本补位。
+	var has_circle_pet := active_core_skill_ids().any(func(pet_id): return pet_id in AREA_SCALING_PETS)
+	var pool: Array = BOSS_RELICS.filter(func(relic): return relic_rank(str(relic.id)) < 3 and (has_circle_pet or str(relic.id) != "rift_compass"))
 	pool.shuffle()
 	var relic_count := 2 if not active_core_skill_ids().is_empty() else 3
 	var offered_relic_count := mini(relic_count, pool.size())
@@ -4195,8 +4262,8 @@ func show_boss_reward(_boss_name: String, story_chapter := 0) -> void:
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var current_rank := relic_rank(str(relic.id))
 		var rank_marks := ["Ⅰ", "Ⅱ", "Ⅲ"]
-		var rank_text := "首次获得" if current_rank == 0 else "共鸣升级　%s→%s" % [rank_marks[current_rank - 1], rank_marks[current_rank]]
-		button.text = "%s\n【%s · %s】\n\n%s" % [relic.name, str(relic.get("type", "稀有遗物")), rank_text, relic.desc]
+		var rank_text := "第一次拿到" if current_rank == 0 else "升级　%s→%s" % [rank_marks[current_rank - 1], rank_marks[current_rank]]
+		button.text = "%s\n【%s · %s】\n\n%s" % [relic.name, str(relic.get("type", "宝物")), rank_text, relic.desc]
 		button.icon = make_skill_icon(relic.id)
 		button.add_theme_constant_override("icon_max_width", 92)
 		button.expand_icon = false
@@ -4256,7 +4323,7 @@ func finish_boss_reward_selection() -> void:
 	player.invulnerable = maxf(player.invulnerable, 0.8)
 	state = GameState.PLAYING
 	get_tree().paused = false
-	# Boss宝箱本身已经是一轮构筑选择；不再紧接着强制弹出商店。
+	# Boss宝箱本身已经是一轮搭配选择；不再紧接着强制弹出商店。
 	# 下一家定时商店保证提供与当前宠物相关的搭档牌。
 	directed_shop_pending = true
 	# Boss 战期间被锁住的商店是玩家已经挣到的，打完就该兑现，
@@ -4287,12 +4354,12 @@ func show_mainline_completion_choice() -> void:
 	var title := make_label("六章主线完成", 46, Color("facc15"))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(title)
-	var summary := make_label("大灯塔重新亮起，这次远征已经取得胜利。\n现在可以带着成果完成结算，也可以继续深入无尽星潮。", 22, Color("d8e5f3"))
+	var summary := make_label("大灯塔重新亮起，这次远征成功了！\n可以就此收工，也可以继续往更深的地方走。", 22, Color("d8e5f3"))
 	summary.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	summary.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(summary)
-	var settle := make_button("完成远征 · 胜利结算", Vector2(720, 64))
+	var settle := make_button("完成远征 · 就此收工", Vector2(720, 64))
 	settle.process_mode = Node.PROCESS_MODE_ALWAYS
 	settle.pressed.connect(complete_mainline_run)
 	box.add_child(settle)
@@ -4324,7 +4391,7 @@ func continue_to_endless() -> void:
 func select_boss_card_edition(card_id: String, edition_id: String) -> void:
 	card_editions[card_id] = edition_id
 	check_achievement_progress()
-	show_toast("Boss改造：%s 获得【%s】版本" % [card_display_name(card_id), card_edition_name(edition_id)], Color("70d7ff"), 2.0)
+	show_toast("首领改造：%s 获得【%s】版本" % [card_display_name(card_id), card_edition_name(edition_id)], Color("70d7ff"), 2.0)
 	play_tone(980.0, 0.16, 0.22)
 	update_deck_card_row()
 	finish_boss_reward_selection()
@@ -4338,19 +4405,19 @@ func select_boss_relic(id: String) -> void:
 	match id:
 		"predator_boots": player.speed *= 1.12; stats.cooldown = maxf(0.55, float(stats.cooldown) * 0.92)
 		"aegis_fragment": player.increase_max_health(12.0); player.armor += 1.0; player.shield_charges += 1
-		"rift_compass": stats.area *= 1.15
+		"rift_compass": stats.area *= 1.15; pending_area_growth_flash = true
 		"judge_spark": stats.crit = minf(0.85, float(stats.crit) + 0.10); bonus_crit_damage += 0.20
 		"ember_vessel": burn_burst = true
 		"storm_relay": pass
 	check_achievement_progress()
 	var selected_relic: Dictionary = BOSS_RELICS.filter(func(relic): return relic.id == id)[0]
-	show_toast("获得%s · %s　共鸣%d/3\n%s" % [str(selected_relic.get("type", "稀有遗物")), selected_relic.name, relic_rank(id), relic_story_line(id)], Color("facc15"), 2.8)
+	show_toast("拿到%s · %s　等级%d/3\n%s" % [str(selected_relic.get("type", "宝物")), selected_relic.name, relic_rank(id), relic_story_line(id)], Color("facc15"), 2.8)
 	refresh_derived_card_effects()
 	check_evolutions()
 	finish_boss_reward_selection()
 
 func award_character_achievement(character_name: String) -> void:
-	var ids := {"游侠":"ranger_journey", "骑士":"knight_journey", "星术师":"mage_journey", "守卫":"guardian_journey", "影舞者":"dancer_journey", "星火使":"fire_journey"}
+	var ids := {"游侠":"ranger_journey", "骑士":"knight_journey", "魔法师":"mage_journey", "守卫":"guardian_journey", "影舞者":"dancer_journey", "星火使":"fire_journey"}
 	var achievement_id: String = ids.get(character_name, "")
 	if achievement_id != "":
 		award_achievement(achievement_id)
@@ -4517,7 +4584,7 @@ func credit_star_shards(amount: int, count_as_collected := false) -> void:
 	if debt_payment > 0:
 		rental_debt -= debt_payment
 		amount -= debt_payment
-		show_toast("租赁欠费自动偿还 · ◆%d" % debt_payment, Color("efb8ff"), 0.8)
+		show_toast("补交了租金 · ◆%d" % debt_payment, Color("efb8ff"), 0.8)
 	star_shards += amount
 	check_achievement_progress()
 	update_hud()
@@ -4559,6 +4626,8 @@ func available_shop_cards(excluded: Array[String] = []) -> Array:
 			continue
 		if id == "combo_catalyst" and active_combo_count() <= 0:
 			continue
+		if id == "area" and not active_core_skill_ids().any(func(pet_id): return pet_id in AREA_SCALING_PETS):
+			continue
 		if id == "card_slot" and card_slots >= MAX_CARD_SLOTS:
 			continue
 		pool.append(upgrade)
@@ -4576,8 +4645,8 @@ func directed_partner_ids() -> Array[String]:
 			result.append(left_id)
 	for core_id in active_core_skill_ids():
 		var extras: Array = {
-			"aura":["orbit", "satellite_engine", "area"], "orbit":["aura", "area"],
-			"satellite_engine":["aura", "area"], "chain":["burn", "thunder_orb", "crit"],
+			"aura":["orbit", "satellite_engine", "area"], "orbit":["aura", "satellite_engine"],
+			"satellite_engine":["aura", "orbit"], "chain":["burn", "thunder_orb", "crit"],
 			"nova":["gravity_well", "area"], "phase_step":["blade_dance", "crit"],
 			"thunder_orb":["chain", "crit"], "gravity_well":["nova", "area"],
 			"blade_dance":["phase_step", "crit"], "meteor_rain":["frost_brand", "area"],
@@ -4817,7 +4886,7 @@ func show_shop(force := false) -> void:
 	header.add_child(title)
 	shop_wallet_label = make_label("", 20, Color("fff3c4"))
 	header.add_child(shop_wallet_label)
-	var hint := make_label("星屑会保留到后续商店；按当前构筑取舍购买，或存下星屑等待高品质卡牌。", 12, Color("9bb4d1"))
+	var hint := make_label("星屑会保留到后续商店；按当前搭配取舍购买，或存下星屑等待高品质卡牌。", 12, Color("9bb4d1"))
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	root.add_child(hint)
 	# 货架高度必须是固定的：商品数量、文案长度、字体换行都会改变内容高度，
@@ -4854,7 +4923,7 @@ func show_shop(force := false) -> void:
 	leave.process_mode = Node.PROCESS_MODE_ALWAYS
 	leave.pressed.connect(close_shop)
 	actions.add_child(leave)
-	var contract := make_compact_button("签署危险契约并出发", Vector2(0, 38))
+	var contract := make_compact_button("签署危险挑战并出发", Vector2(0, 38))
 	contract.name = "ShopContract"
 	contract.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	contract.process_mode = Node.PROCESS_MODE_ALWAYS
@@ -4884,45 +4953,45 @@ func bank_world_shards() -> void:
 			child.queue_free()
 	if banked > 0:
 		gain_star_shards(banked)
-		show_toast("波次结算 · 回收散落星屑 ◆%d" % banked, Color("facc15"), 0.9)
+		show_toast("这一波结束 · 捡回散落的星屑 ◆%d" % banked, Color("facc15"), 0.9)
 
 func shop_offer_text(offer: Dictionary) -> String:
 	var kind := str(offer.get("kind", "card"))
 	if kind == "endless":
 		var id := str(offer.id)
-		return "%s\n【史诗 · 无尽成长】\n\n%s\n\n当前 %d/10 · 可重复强化" % [card_display_name(id), skill_description(id), int(upgrade_levels.get(id, 0))]
+		return "%s\n【史诗 · 无尽成长】\n\n%s\n\n现在 %d/10 · 可以反复买" % [card_display_name(id), skill_description(id), int(upgrade_levels.get(id, 0))]
 	if kind == "forge":
 		return "星屑熔炉
-【可反复投入】
+【可以反复买】
 
-每次让每枚供能弹 +%.2f 能量
-当前 %.2f / 上限 %.2f
-不占卡槽" % [FORGE_ENERGY_GAIN, float(stats.energy_power), FORGE_ENERGY_CAP]
+每次让每发能量弹 +%.2f 能量
+现在 %.2f / 最多 %.2f
+不占卡位" % [FORGE_ENERGY_GAIN, float(stats.energy_power), FORGE_ENERGY_CAP]
 	if kind == "supply":
-		return "星潮供能箱\n【即时补给】\n\n接下来3枚供能弹强度×1.50\n不占卡槽，可反复购买"
+		return "能量补给箱\n【马上生效】\n\n接下来3发能量弹强度×1.50\n不占卡位，可以反复买"
 	if kind == "voucher":
 		var voucher: Dictionary = EXPEDITION_VOUCHERS.filter(func(item): return str(item.id) == str(offer.id))[0]
-		return "远征许可 · %s\n\n%s\n不占卡槽，本局持续生效" % [voucher.name, voucher.desc]
+		return "商店许可 · %s\n\n%s\n不占卡位，这一局一直有用" % [voucher.name, voucher.desc]
 	if kind == "pack":
-		var pack_names := {"pet_pack":"星灵蛋匣", "rule_pack":"星律卡包", "element_pack":"元素样本", "risk_pack":"禁忌档案"}
-		return "%s\n\n打开4项候选并选择1项\n可以跳过，不占消耗物槽" % str(pack_names.get(str(offer.id), "星渊补充包"))
+		var pack_names := {"pet_pack":"星灵蛋盒", "rule_pack":"规则卡包", "element_pack":"元素卡包", "risk_pack":"冒险卡包"}
+		return "%s\n\n打开后从4样里挑1样\n可以不挑，不占格子" % str(pack_names.get(str(offer.id), "星渊补充包"))
 	if kind == "sigil":
 		var sigil: Dictionary = STAR_SIGILS.filter(func(item): return str(item.id) == str(offer.id))[0]
-		return "星象符 · %s\n\n%s\n最多携带2枚，在商店内使用" % [sigil.name, sigil.desc]
+		return "星星符 · %s\n\n%s\n最多带2枚，只能在商店里用" % [sigil.name, sigil.desc]
 	if kind == "seal":
 		var seal: Dictionary = CARD_SEALS.filter(func(item): return str(item.id) == str(offer.seal))[0]
-		return "%s\n附着到【%s】\n\n%s" % [seal.name, card_display_name(str(offer.id)), seal.desc]
+		return "%s\n贴在【%s】上\n\n%s" % [seal.name, card_display_name(str(offer.id)), seal.desc]
 	if kind == "pattern":
-		return "星式研究 · %s\n\n该牌型星能+6、宠物释技倍率+3%%\n最多研究3次" % str(offer.id)
+		return "阵型练习 · %s\n\n凑出这个阵型时：能量+6，宠物这次伤害再多3%%\n最多练3次" % str(offer.id)
 	if kind == "edition":
-		return "%s版本\n改造【%s】\n\n%s" % [card_edition_name(str(offer.edition)), card_display_name(str(offer.id)), CARD_EDITIONS.filter(func(item): return str(item.id) == str(offer.edition))[0].desc]
+		return "%s版本\n把【%s】改造一下\n\n%s" % [card_edition_name(str(offer.edition)), card_display_name(str(offer.id)), CARD_EDITIONS.filter(func(item): return str(item.id) == str(offer.edition))[0].desc]
 	if kind == "heal":
-		return "战地修复\n\n立即恢复25生命\n不占卡槽"
+		return "急救包\n\n马上回25点血\n不占卡位"
 	var id := str(offer.id)
 	var data: Dictionary = UPGRADES.filter(func(item): return str(item.id) == id)[0]
 	if is_training_card(id):
-		return "%s\n【%s · 一次性训练】\n\n%s\n\n当前训练 %d/%d · 购买后立即使用，不占卡槽" % [data.name, card_rarity(id), training_gain_preview(id), int(upgrade_levels.get(id, 0)), int(data.max)]
-	var slot_text := "槽满时可出售旧牌抵扣" if equipped_cards.size() >= card_slots else "购买后置入卡组最右侧"
+		return "%s\n【%s · 一次性训练】\n\n%s\n\n已经练了 %d/%d · 买下马上用掉，不占卡位" % [data.name, card_rarity(id), training_gain_preview(id), int(upgrade_levels.get(id, 0)), int(data.max)]
+	var slot_text := "卡位满了，可以卖掉一张旧牌来换" if equipped_cards.size() >= card_slots else "买下后放到卡组最右边"
 	return "%s\n【%s · %s】\n\n%s\n\n%s" % [data.name, card_rarity(id), card_build_type(id), skill_description(id), slot_text]
 
 func sigil_name(id: String) -> String:
@@ -4979,8 +5048,8 @@ func booster_candidates(pack_id: String) -> Array:
 	match pack_id:
 		"pet_pack": pool = pool.filter(func(item): return str(item.id) in CORE_SKILL_CARD_IDS)
 		"element_pack": pool = pool.filter(func(item): return str(item.id) in ["burn", "frost_brand", "thunder_orb", "gravity_well", "chain", "meteor_rain", "aura"])
-		"risk_pack": pool = pool.filter(func(item): return card_build_type(str(item.id)) in ["风险倍率", "复制回响", "Boss反制", "节奏倍率"])
-		"rule_pack": pool = pool.filter(func(item): return card_build_type(str(item.id)) in ["构筑规则", "牌型规则", "触发牌", "技能改造"])
+		"risk_pack": pool = pool.filter(func(item): return card_build_type(str(item.id)) in ["冒险牌", "照抄牌", "克制首领", "节奏牌"])
+		"rule_pack": pool = pool.filter(func(item): return card_build_type(str(item.id)) in ["搭配规则", "阵型牌", "触发牌", "技能改造"])
 	pool.shuffle()
 	return pool.slice(0, mini(4, pool.size()))
 
@@ -5052,9 +5121,9 @@ func claim_booster_card(id: String, pack_id := "") -> void:
 		pending_drawback_id = ""
 	var drawback_note := ""
 	match str(card_drawbacks.get(id, "")):
-		"fragile": drawback_note = "\n脆裂：技能伤害+25%，角色受到伤害+18%"
-		"rental": drawback_note = "\n租赁：每次离店收取◆1，欠费会从后续收入扣除"
-		"eternal": drawback_note = "\n永恒：本局不能出售、替换或熔解"
+		"fragile": drawback_note = "\n易碎：宠物伤害+25%，你自己挨打会疼18%"
+		"rental": drawback_note = "\n租来的：每次离开商店交◆1，欠着的以后自动扣"
+		"eternal": drawback_note = "\n永久：这一局不能卖掉、换掉或拆掉"
 	show_toast("补充包选择 · %s%s" % [card_display_name(id), drawback_note], Color("c084fc"), 1.8 if not drawback_note.is_empty() else 1.0)
 
 func skip_booster_pack() -> void:
@@ -5105,7 +5174,7 @@ func use_sigil(id: String) -> void:
 		"reforge":
 			prepare_shop_goods(true)
 	consumable_sigils.erase(id)
-	show_toast("使用星象符 · %s" % sigil_name(id), Color("c084fc"), 1.0)
+	show_toast("用了星星符 · %s" % sigil_name(id), Color("c084fc"), 1.0)
 	refresh_derived_card_effects()
 	check_achievement_progress()
 	update_deck_card_row()
@@ -5115,7 +5184,7 @@ func refresh_shop_view() -> void:
 	shop_refresh_pending = false
 	if not is_instance_valid(shop_overlay):
 		return
-	shop_wallet_label.text = "◆ 星屑 %d%s" % [star_shards, " · 租赁欠费 %d" % rental_debt if rental_debt > 0 else ""]
+	shop_wallet_label.text = "◆ 星屑 %d%s" % [star_shards, " · 欠租金 %d" % rental_debt if rental_debt > 0 else ""]
 	for child in shop_goods_row.get_children():
 		child.free()
 	for index in shop_goods.size():
@@ -5293,7 +5362,7 @@ func purchase_shop_offer(index: int) -> void:
 			mark_shop_offer_sold(index)
 			shop_purchases_this_visit += 1
 			award_achievement("shop_first")
-			show_toast("远征许可生效 · %s" % str(EXPEDITION_VOUCHERS.filter(func(item): return str(item.id) == str(offer.id))[0].name), Color("facc15"), 1.2)
+			show_toast("商店许可生效 · %s" % str(EXPEDITION_VOUCHERS.filter(func(item): return str(item.id) == str(offer.id))[0].name), Color("facc15"), 1.2)
 		"pack":
 			star_shards -= price
 			spent_star_shards += price
@@ -5310,7 +5379,7 @@ func purchase_shop_offer(index: int) -> void:
 			mark_shop_offer_sold(index)
 			shop_purchases_this_visit += 1
 			award_achievement("shop_first")
-			show_toast("获得星象符 · %s" % sigil_name(str(offer.id)), Color("c084fc"), 1.0)
+			show_toast("获得星星符 · %s" % sigil_name(str(offer.id)), Color("c084fc"), 1.0)
 		"seal":
 			if not compatible_seals_for_card(str(offer.id)).has(str(offer.seal)):
 				return
@@ -5329,7 +5398,7 @@ func purchase_shop_offer(index: int) -> void:
 			mark_shop_offer_sold(index)
 			shop_purchases_this_visit += 1
 			award_achievement("shop_first")
-			show_toast("星式研究 · %s %d/3" % [str(offer.id), int(pattern_mastery[str(offer.id)])], Color("70d7ff"), 1.0)
+			show_toast("阵型练习 · %s %d/3" % [str(offer.id), int(pattern_mastery[str(offer.id)])], Color("70d7ff"), 1.0)
 		"heal":
 			star_shards -= price
 			spent_star_shards += price
@@ -5351,14 +5420,14 @@ func purchase_shop_offer(index: int) -> void:
 			shop_goods[index] = refreshed
 			shop_purchases_this_visit += 1
 			award_achievement("shop_first")
-			show_toast("星屑熔炉 · 供能强度提升至 %.2f" % float(stats.energy_power), Color("facc15"), 1.1)
+			show_toast("星屑熔炉 · 能量弹强度升到 %.2f" % float(stats.energy_power), Color("facc15"), 1.1)
 		"supply":
 			star_shards -= price
 			spent_star_shards += price
 			surge_pulses += 3
 			mark_shop_offer_sold(index)
 			shop_purchases_this_visit += 1
-			show_toast("星潮供能箱 · 接下来3枚供能弹强化", Color("70d7ff"), 1.1)
+			show_toast("能量补给箱 · 接下来3枚能量弹强化", Color("70d7ff"), 1.1)
 			award_achievement("shop_first")
 		"edition":
 			if not compatible_editions_for_card(str(offer.id)).any(func(edition): return str(edition.id) == str(offer.edition)):
@@ -5384,10 +5453,10 @@ func sell_shop_card(id: String) -> void:
 	if not equipped_cards.has(id):
 		return
 	if str(card_drawbacks.get(id, "")) == "eternal":
-		show_toast("永恒版本不能出售或替换", Color("ef476f"), 1.0)
+		show_toast("永久版本不能卖也不能换", Color("ef476f"), 1.0)
 		return
 	if id == "card_slot" and equipped_cards.size() > STARTING_CARD_SLOTS:
-		show_toast("扩展卡匣正在维持额外槽位，不能出售", Color("ef476f"), 1.2)
+		show_toast("加卡位正在维持额外槽位，不能出售", Color("ef476f"), 1.2)
 		return
 	var refund := card_sell_value(id)
 	insure_pet_before_sale(id)
@@ -5397,7 +5466,7 @@ func sell_shop_card(id: String) -> void:
 	award_achievement("shop_sale")
 	if equipped_cards.has("campfire"):
 		campfire_stacks = mini(6, campfire_stacks + 1)
-		show_toast("焚牌营火成长 · %d/6" % campfire_stacks, Color("fb923c"), 0.8)
+		show_toast("卖牌变强成长 · %d/6" % campfire_stacks, Color("fb923c"), 0.8)
 	refresh_derived_card_effects()
 	update_deck_card_row()
 	queue_shop_refresh()
@@ -5417,11 +5486,11 @@ func close_shop() -> void:
 	shop_goods.clear()
 	if shop_purchases_this_visit == 0 and equipped_cards.has("red_contract"):
 		red_contract_stacks = mini(6, red_contract_stacks + 1)
-		show_toast("拒选红契成长 · %d/6" % red_contract_stacks, Color("ef476f"), 1.0)
+		show_toast("不买变强成长 · %d/6" % red_contract_stacks, Color("ef476f"), 1.0)
 	if equipped_cards.has("moon_interest") and star_shards >= 10:
 		var interest := mini(5, int(floor(star_shards * 0.10)))
 		credit_star_shards(interest)
-		show_toast("月息账户 · 利息 ◆%d" % interest, Color("facc15"), 1.0)
+		show_toast("存钱罐 · 利息 ◆%d" % interest, Color("facc15"), 1.0)
 	start_wave_goal()
 	var rental_cost := 0
 	for id in equipped_cards:
@@ -5432,7 +5501,7 @@ func close_shop() -> void:
 	star_shards -= paid
 	rental_debt -= paid
 	if rental_cost > 0 or paid > 0 or rental_debt > 0:
-		show_toast("租赁版本维护费 · 已付◆%d%s" % [paid, " · 欠费◆%d" % rental_debt if rental_debt > 0 else ""], Color("efb8ff"), 1.2)
+		show_toast("交租金 · 付了◆%d%s" % [paid, " · 还欠◆%d" % rental_debt if rental_debt > 0 else ""], Color("efb8ff"), 1.2)
 	player.selection_protected = false
 	player.can_move = true
 	player.invulnerable = maxf(player.invulnerable, 0.8)
@@ -5445,7 +5514,7 @@ func accept_danger_contract() -> void:
 	if not danger_contract.is_empty():
 		return
 	danger_contract = {"kills":kills, "target":25}
-	show_toast("危险契约已签署 · 强敌来袭\n击败25名敌人可赢得6星屑与免费补充包", Color("ef476f"), 1.8)
+	show_toast("危险挑战已签署 · 强敌来袭\n击败25名敌人可赢得6星屑与免费补充包", Color("ef476f"), 1.8)
 	close_shop()
 
 func start_wave_goal() -> void:
@@ -5454,9 +5523,9 @@ func start_wave_goal() -> void:
 	wave_resonance_generated = 0.0
 	var type: String = ["kills", "hands", "resonance"].pick_random()
 	match type:
-		"kills": wave_goal = {"type":type, "start":kills, "target":16, "name":"本波击败16名敌人"}
-		"hands": wave_goal = {"type":type, "start":hands_played, "target":10, "name":"本波宠物释技10次"}
-		_: wave_goal = {"type":type, "start":0.0, "target":80, "name":"本波累计产生80共鸣"}
+		"kills": wave_goal = {"type":type, "start":kills, "target":16, "name":"这一波打倒16个敌人"}
+		"hands": wave_goal = {"type":type, "start":hands_played, "target":10, "name":"这一波宠物放10次技能"}
+		_: wave_goal = {"type":type, "start":0.0, "target":80, "name":"这一波一共攒到80气势"}
 
 func resolve_wave_challenges() -> void:
 	if not wave_goal.is_empty():
@@ -5467,7 +5536,7 @@ func resolve_wave_challenges() -> void:
 			_: progress = wave_resonance_generated
 		if progress >= float(wave_goal.target):
 			gain_star_shards(3)
-			show_toast("波次目标完成 · ◆3", Color("4ade80"), 1.0)
+			show_toast("完成小目标 · ◆3", Color("4ade80"), 1.0)
 		else:
 			show_toast("波次目标未完成 · 不受惩罚", Color("9bb4d1"), 0.8)
 		wave_goal.clear()
@@ -5475,9 +5544,9 @@ func resolve_wave_challenges() -> void:
 		if kills - int(danger_contract.kills) >= int(danger_contract.target):
 			gain_star_shards(6)
 			guaranteed_reward_pack = true
-			show_toast("危险契约完成 · ◆6与免费补充包", Color("facc15"), 1.3)
+			show_toast("危险挑战完成 · ◆6与免费补充包", Color("facc15"), 1.3)
 		else:
-			show_toast("危险契约失败 · 敌人恢复正常", Color("ef476f"), 0.9)
+			show_toast("危险挑战失败 · 敌人恢复正常", Color("ef476f"), 0.9)
 		danger_contract.clear()
 
 func show_shop_replacement(incoming_id: String, price: int, offer_index: int) -> void:
@@ -5506,7 +5575,7 @@ func show_shop_replacement(incoming_id: String, price: int, offer_index: int) ->
 	var title := make_label("卡槽已满 · 出售旧牌并购买新牌", 30, Color("facc15"))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(title)
-	var info := make_label("准备购买【%s】 ◆%d\n旧牌回收价将直接抵扣；余额不足的选项不可选择。" % [card_display_name(incoming_id), price], 16, Color("c7d7eb"))
+	var info := make_label("要买【%s】，需要 ◆%d\n卖旧牌的钱会直接抵掉一部分；钱不够的选项点不了。" % [card_display_name(incoming_id), price], 16, Color("c7d7eb"))
 	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(info)
 	var scroll := ScrollContainer.new()
@@ -5628,22 +5697,23 @@ func training_gain_preview(id: String) -> String:
 	var value := ""
 	match id:
 		"damage":
-			value = "基础供能强度 +6%"
-			if player.character_name == "游侠": value = "基础供能强度 +10%"; specialist = "游侠专精"
-			elif player.character_name == "星火使": value = "基础供能强度 +9%"; specialist = "星火使专精"
-		"cooldown": value = "基础供能间隔 -7%" if player.character_name == "星术师" else "基础供能间隔 -4%"; specialist = "星术师专精" if player.character_name == "星术师" else ""
-		"speed": value = "基础移动速度 +17" if player.character_name == "影舞者" else "基础移动速度 +10"; specialist = "影舞者专精" if player.character_name == "影舞者" else ""
-		"health": value = "最大生命 +12" if player.character_name in ["骑士", "守卫"] else "最大生命 +8"; specialist = "%s专精" % player.character_name if player.character_name in ["骑士", "守卫"] else ""
-		"armor": value = "基础护甲 +2" if player.character_name == "骑士" else "基础护甲 +1"; specialist = "骑士专精" if player.character_name == "骑士" else ""
-		"regen": value = "基础恢复 +0.22/秒" if player.character_name == "守卫" else "基础恢复 +0.12/秒"; specialist = "守卫专精" if player.character_name == "守卫" else ""
-		"crit": value = ("宠物基础暴击率 +7%" if player.character_name == "影舞者" else "宠物基础暴击率 +4%") + " · 幸运 +1%"; specialist = "影舞者专精" if player.character_name == "影舞者" else ""
+			value = "基础充能强度 +6%"
+			if player.character_name == "游侠": value = "基础充能强度 +10%"; specialist = "游侠擅长"
+			elif player.character_name == "星火使": value = "基础充能强度 +9%"; specialist = "星火使擅长"
+		"cooldown": value = "基础充能间隔 -7%" if player.character_name == "魔法师" else "基础充能间隔 -4%"; specialist = "魔法师擅长" if player.character_name == "魔法师" else ""
+		"speed": value = "基础移动速度 +17" if player.character_name == "影舞者" else "基础移动速度 +10"; specialist = "影舞者擅长" if player.character_name == "影舞者" else ""
+		"health": value = "最大生命 +12" if player.character_name in ["骑士", "守卫"] else "最大生命 +8"; specialist = "%s擅长" % player.character_name if player.character_name in ["骑士", "守卫"] else ""
+		"armor": value = "基础护甲 +2" if player.character_name == "骑士" else "基础护甲 +1"; specialist = "骑士擅长" if player.character_name == "骑士" else ""
+		"regen": value = "基础恢复 +0.22/秒" if player.character_name == "守卫" else "基础恢复 +0.12/秒"; specialist = "守卫擅长" if player.character_name == "守卫" else ""
+		"crit": value = ("宠物基础暴击率 +7%" if player.character_name == "影舞者" else "宠物基础暴击率 +4%") + " · 幸运 +1%"; specialist = "影舞者擅长" if player.character_name == "影舞者" else ""
 		"magnet": value = "基础拾取范围 +12"
+		"leash": value = "宠物能跑多远 +%d（现在 %d）" % [int(TETHER_RANGE_PER_LEVEL), int(pet_tether_range() + TETHER_RANGE_PER_LEVEL)]
 	return value + (" · %s" % specialist if not specialist.is_empty() else "")
 
 func apply_training_card(id: String) -> void:
 	match id:
 		"damage": stats.energy_power = minf(1.80, float(stats.energy_power) + (0.10 if player.character_name == "游侠" else (0.09 if player.character_name == "星火使" else 0.06)))
-		"cooldown": stats.cooldown = maxf(0.55, float(stats.cooldown) * (0.93 if player.character_name == "星术师" else 0.96))
+		"cooldown": stats.cooldown = maxf(0.55, float(stats.cooldown) * (0.93 if player.character_name == "魔法师" else 0.96))
 		"speed": player.speed += 17.0 if player.character_name == "影舞者" else 10.0
 		"health": player.increase_max_health(12.0 if player.character_name in ["骑士", "守卫"] else 8.0)
 		"armor": player.armor += 2.0 if player.character_name == "骑士" else 1.0
@@ -5652,6 +5722,7 @@ func apply_training_card(id: String) -> void:
 			stats.crit = minf(0.85, float(stats.crit) + (0.07 if player.character_name == "影舞者" else 0.04))
 			stats.luck = minf(0.12, float(stats.luck) + 0.01)
 		"magnet": stats.magnet = minf(240.0, float(stats.magnet) + 12.0)
+		"leash": pass  # 绳长直接从 upgrade_levels 读，见 pet_tether_range()
 	show_toast("训练完成 · %s\n%s" % [card_display_name(id), training_gain_preview(id)], Color("4ade80"), 1.1)
 
 func upgrade_max_level(id: String) -> int:
@@ -5663,6 +5734,8 @@ func upgrade_max_level(id: String) -> int:
 	return 1
 
 func apply_upgrade(id: String, from_shop := false, price := 0, offer_index := -1) -> void:
+	if id == "area":
+		pending_area_growth_flash = true
 	if from_shop:
 		if state != GameState.LEVEL_UP or not is_instance_valid(shop_overlay) or star_shards < price or int(upgrade_levels.get(id, 0)) >= upgrade_max_level(id):
 			return
@@ -5679,7 +5752,7 @@ func apply_upgrade(id: String, from_shop := false, price := 0, offer_index := -1
 		award_pet_meeting_achievement(id)
 		restore_insured_pet(id)
 	match id:
-		"damage", "cooldown", "speed", "health", "armor", "regen", "crit", "magnet": apply_training_card(id)
+		"damage", "cooldown", "speed", "health", "armor", "regen", "crit", "magnet", "leash": apply_training_card(id)
 		"projectile", "pierce", "area": pass
 		"glass":
 			var previous_max_health := player.max_health
@@ -5734,17 +5807,17 @@ func check_evolutions() -> void:
 		evolutions["molten_circuit"] = true
 		award_achievement("combo_adept")
 		award_achievement("molten_master")
-		show_toast("进化：熔雷回路\n灼烧目标被连锁电弧命中时引爆", Color("fb923c"), 2.2)
+		show_toast("组合成型：火雷组合\n着火的敌人被闪电打中时会爆开", Color("fb923c"), 2.2)
 		shake_camera(8.0)
-		pending_story_toast = "熔雷回路共鸣\n沉默城市的电网沿弧牙雷光重新亮起：我们看见了。"
+		pending_story_toast = "火雷组合成型\n沉默城市的电网沿弧牙雷光重新亮起：我们看见了。"
 		play_tone(760.0, 0.18, 0.2)
 	if not evolutions.has("stellar_lattice") and is_card_active("aura") and (is_card_active("orbit") or is_card_active("satellite_engine")):
 		evolutions["stellar_lattice"] = true
 		award_achievement("combo_adept")
 		award_achievement("stellar_master")
-		show_toast("进化：星环矩阵\n光环标记敌人，卫星命中引爆共鸣", Color("c084fc"), 2.2)
+		show_toast("组合成型：卫星光环\n光环给敌人做记号，卫星打中就引爆", Color("c084fc"), 2.2)
 		shake_camera(8.0)
-		pending_story_toast = "星环矩阵共鸣\n暮环与环尾共同投影出轨道花园最后一次日落。"
+		pending_story_toast = "卫星光环成型\n暮环与环尾共同投影出轨道花园最后一次日落。"
 		play_tone(880.0, 0.18, 0.2)
 
 func show_pause() -> void:
@@ -5835,14 +5908,14 @@ func end_run(victory: bool) -> void:
 	var mode_summary := "无尽第 %d 波" % endless_wave if endless_mode else "主线 %d/6 关" % mini(boss_kills, 6)
 	var new_achievements := maxi(0, SaveManager.data.achievements.size() - run_achievement_start_count)
 	var pressure_line := DifficultyDirector.describe(run_pressure_scale)
-	var summary := "生存时间  %s  ·  击败 %d  ·  Boss %d  ·  %s\n累计星屑 %d  ·  消费 %d  ·  剩余 %d\n本局解锁成就 %d  ·  新故事 %d  ·  永久保留内容只有成就与故事" % [format_time(elapsed), kills, boss_kills, mode_summary, total_star_shards, spent_star_shards, star_shards, new_achievements, run_new_story_ids.size()]
+	var summary := "生存时间  %s  ·  击败 %d  ·  首领 %d  ·  %s\n一共拿到星屑 %d  ·  花掉 %d  ·  还剩 %d\n这局解锁成就 %d  ·  新故事 %d  ·  能带走的只有成就和故事" % [format_time(elapsed), kills, boss_kills, mode_summary, total_star_shards, spent_star_shards, star_shards, new_achievements, run_new_story_ids.size()]
 	if pressure_line != "":
 		summary += String.chr(10) + pressure_line + " · 只改变普通敌人的血量，不改伤害与掉落"
 	# 快层是连续变化的，挂在 HUD 上只会一直跳数字；放在结算里报均值，
 	# 玩家既知道它存在、也能看出这一局它到底介入了多少。
 	var flow_average := flow_pressure_average()
 	if not endless_mode and absf(flow_average - 1.0) >= 0.005:
-		summary += String.chr(10) + "局内即时微调 均值%+d%%（上限 ±%d%%，Boss 战与开局 %d 秒内不介入）" % [int(round((flow_average - 1.0) * 100.0)), int(FLOW_BAND * 100.0), int(FLOW_WARMUP)]
+		summary += String.chr(10) + "局内即时微调 均值%+d%%（上限 ±%d%%，首领战和开局 %d 秒内不介入）" % [int(round((flow_average - 1.0) * 100.0)), int(FLOW_BAND * 100.0), int(FLOW_WARMUP)]
 	var summary_label := make_label(summary, 18, Color("d8e5f3"))
 	summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	summary_label.size_flags_vertical = Control.SIZE_EXPAND_FILL

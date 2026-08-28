@@ -33,7 +33,7 @@ func setup(chosen: String) -> void:
 			armor += 3.0
 			speed -= 20.0
 			color = Color("ffbd69")
-		"星术师":
+		"魔法师":
 			max_health -= 10.0
 			speed += 15.0
 			color = Color("c084fc")

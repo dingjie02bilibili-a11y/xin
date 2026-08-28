@@ -25,7 +25,7 @@ func run_test() -> void:
 	assert(not game.boss_disruption_affix_pool(4, "control").has("pet_thief") and not game.boss_disruption_affix_pool(4, "control").has("pet_charm"), "Pet control unlocked before chapter 5")
 	assert(not game.boss_disruption_affix_pool(6, "pursuit").has("pet_thief") and not game.boss_disruption_affix_pool(6, "pursuit").has("pet_charm"), "Pursuit boss received an unfair pet-recovery affix")
 
-	var boss = game.spawn_enemy("星渊禁锢者", true)
+	var boss = game.spawn_enemy("弥垣·关门人", true)
 	await process_frame
 	for deprivation in ["sealed_hand", "pet_thief", "pet_charm"]:
 		match deprivation:

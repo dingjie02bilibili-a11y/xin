@@ -28,7 +28,7 @@ func run_test() -> void:
 	assert("升级条件：" in aura_tip and "★1" in aura_tip, "Concise mastery condition is missing from the tooltip")
 	assert(not "卡牌版本" in aura_tip and not "占用1格" in aura_tip, "Tooltip still contains verbose deck metadata")
 	for angle in [0.0, 1.57, 3.14, 4.71]:
-		var aura_enemy = game.spawn_enemy("重甲怪")
+		var aura_enemy = game.spawn_enemy("铁甲怪")
 		aura_enemy.global_position = game.player.global_position + Vector2.from_angle(angle) * 45.0
 	game.elapsed += 2.0
 	game.fire_aura()
@@ -36,7 +36,7 @@ func run_test() -> void:
 	grant_core(game, "phase_step")
 	var start: Vector2 = game.player.global_position
 	for x in [95.0, 185.0]:
-		var enemy = game.spawn_enemy("重甲怪")
+		var enemy = game.spawn_enemy("铁甲怪")
 		enemy.global_position = start + Vector2(x, 0)
 	game.player.rotation = 0.0
 	game.phase_step_cooldown = 0.0

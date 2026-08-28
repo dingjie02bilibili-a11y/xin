@@ -93,6 +93,12 @@ func _draw() -> void:
 					var mid: Vector2 = (a + b) * 0.5 + (b - a).orthogonal().normalized() * sin(p * 9.0 + float(i)) * 11.0
 					draw_polyline(PackedVector2Array([a, mid, b]), Color(color, alpha), 3.4, true)
 					draw_circle(b, 5.0 * alpha + 2.0, Color(color.lightened(0.5), alpha * 0.8))
+		"reap":
+			# 补刀：一道收割的月牙弧，和「链条被剪断」的碎裂图形必须长得不一样
+			var sweep_start := -PI * 0.85 + p * 1.2
+			draw_arc(Vector2.ZERO, radius * (0.55 + p * 0.5), sweep_start, sweep_start + 2.1, 22, Color(color, alpha), 5.0)
+			draw_arc(Vector2.ZERO, radius * (0.78 + p * 0.5), sweep_start + 0.15, sweep_start + 1.8, 20, Color(color.lightened(0.5), alpha * 0.8), 2.0)
+			draw_circle(Vector2.from_angle(sweep_start + 2.1) * radius * (0.55 + p * 0.5), 4.0 * alpha + 2.0, Color(color.lightened(0.6), alpha))
 		"sever":
 			# 链条被切断
 			for i in 6:

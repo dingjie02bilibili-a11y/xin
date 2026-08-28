@@ -10,7 +10,7 @@ func run_test() -> void:
 	await process_frame
 	game.start_game_after_prologue()
 	game.gain_star_shards(12)
-	game.show_boss_reward("星渊追猎者", 1)
+	game.show_boss_reward("赫巡·追赶者", 1)
 	await process_frame
 	assert(game.boss_reward_overlay != null and game.player.selection_protected, "Boss reward did not pause safely")
 	game.select_boss_relic("predator_boots")

@@ -157,13 +157,13 @@ func check_wiring() -> void:
 	# 敌人强度本来就正比于 elapsed（0.92 + elapsed/520），两次生成之间时间会走，
 	# 所以必须把时间钉死，否则测的是时间曲线而不是压力系数。
 	game.elapsed = 30.0
-	var baseline_enemy = game.spawn_enemy("追猎者")
+	var baseline_enemy = game.spawn_enemy("追踪怪")
 	await process_frame
 	var damage_before: float = baseline_enemy.damage
 	var health_before: float = baseline_enemy.max_health
 	game.run_pressure_scale = 1.0 + Director.BAND
 	game.elapsed = 30.0
-	var pressured_enemy = game.spawn_enemy("追猎者")
+	var pressured_enemy = game.spawn_enemy("追踪怪")
 	await process_frame
 	# 伤害是致死变量，永远不许接系数；血量是唯一既能降压又不制造真空的落点，
 	# 所以这里要求它**必须**跟着动（落点选择的来龙去脉见 dda_fast_layer_smoke）。

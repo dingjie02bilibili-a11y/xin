@@ -65,7 +65,7 @@ func run_test() -> void:
 	var scored: Array = rows.filter(func(r): return str(r.id) != "execute")
 	var top: float = float(scored[0].eff)
 	var bottom: float = float(scored[scored.size() - 1].eff)
-	print("  有效收益极差 %.1f ~ %.1f = %.2f 倍（处决属条件性收割，不参与比较）" % [bottom, top, top / bottom])
+	print("  有效收益极差 %.1f ~ %.1f = %.2f 倍（打倒属条件性收割，不参与比较）" % [bottom, top, top / bottom])
 	flag(top / bottom < 2.2, "宠物之间有效收益相差 %.2f 倍，超过 2.2" % (top / bottom))
 	flag(bottom > 0.0, "存在零输出宠物")
 
@@ -108,7 +108,7 @@ func run_test() -> void:
 			pool.append(game.chapter_enemy_kind(chapter, 0))
 		var elites := 0
 		for kind in pool:
-			if str(kind) in ["重甲怪", "咒术师"]:
+			if str(kind) in ["铁甲怪", "远射怪"]:
 				elites += 1
 		elite_share.append(float(elites) / 3000.0)
 	print("  精英占比 %s" % str(elite_share.map(func(v): return "%.0f%%" % (float(v) * 100.0))))
@@ -121,18 +121,18 @@ func run_test() -> void:
 	for mark in game.MAINLINE_BOSS_SCHEDULE:
 		var difficulty := 0.92 + float(mark) / 520.0
 		dmg.append(5.5 * (0.40 + difficulty * 0.62))
-	print("  追猎者接触伤害 %s（六章增幅 %.0f%%）" % [str(dmg.map(func(v): return "%.1f" % float(v))), (float(dmg[5]) / float(dmg[0]) - 1.0) * 100.0])
+	print("  追踪怪接触伤害 %s（六章增幅 %.0f%%）" % [str(dmg.map(func(v): return "%.1f" % float(v))), (float(dmg[5]) / float(dmg[0]) - 1.0) * 100.0])
 	flag(float(dmg[5]) / float(dmg[0]) > 1.25, "敌人单体伤害六章只涨 %.0f%%，后期压力全靠数量" % ((float(dmg[5]) / float(dmg[0]) - 1.0) * 100.0))
 
 	print("=== 元素常数是否跟随成长 ===")
 	game.equipped_cards.assign(["chain", "burn"])
 	game.refresh_derived_card_effects()
-	var weak = game.spawn_enemy("重甲怪")
-	var strong = game.spawn_enemy("重甲怪")
+	var weak = game.spawn_enemy("铁甲怪")
+	var strong = game.spawn_enemy("铁甲怪")
 	game.calculate_skill_damage(10.0, "chain", weak)
 	game.calculate_skill_damage(60.0, "chain", strong)
-	print("  基础伤害 10 -> 灼烧 %.1f/秒 ; 基础伤害 60 -> 灼烧 %.1f/秒" % [weak.burn_dps, strong.burn_dps])
-	flag(strong.burn_dps > weak.burn_dps * 3.0, "灼烧强度不随本次伤害成长")
+	print("  基础伤害 10 -> 燃烧 %.1f/秒 ; 基础伤害 60 -> 燃烧 %.1f/秒" % [weak.burn_dps, strong.burn_dps])
+	flag(strong.burn_dps > weak.burn_dps * 3.0, "燃烧强度不随本次伤害成长")
 
 	print("=== 开局配置 ===")
 	var ranged := ["chain", "thunder_orb", "meteor_rain", "gravity_well", "execute"]

@@ -154,7 +154,7 @@ func check_boss_freeze() -> void:
 	await process_frame
 	await advance(game.FLOW_WARMUP + 30.0, "calm")
 	preserve_boss = true
-	var boss = game.spawn_enemy("星渊追猎者", true)
+	var boss = game.spawn_enemy("赫巡·追赶者", true)
 	await process_frame
 	var frozen: float = game.flow_pressure
 	# Boss 在场时把玩家打到濒死：这正是「掉血换简单」漏洞的形状。
@@ -185,11 +185,11 @@ func check_isolation_of_knobs() -> void:
 	# 敌人强度正比于 elapsed，两次生成之间必须把时间钉死。
 	game.elapsed = 90.0
 	game.flow_pressure = 1.0
-	var baseline = game.spawn_enemy("追猎者")
+	var baseline = game.spawn_enemy("追踪怪")
 	await process_frame
 	game.elapsed = 90.0
 	game.flow_pressure = 1.0 - game.FLOW_BAND
-	var eased = game.spawn_enemy("追猎者")
+	var eased = game.spawn_enemy("追踪怪")
 	await process_frame
 	flag(is_equal_approx(eased.damage, baseline.damage), "快层改到了敌人伤害上")
 	flag(eased.xp_value == baseline.xp_value, "快层改到了掉落价值上")
@@ -217,10 +217,10 @@ func check_knob_isolation() -> void:
 		seed(4242)
 		var reward := 0
 		for index in 400:
-			reward += game.roll_enemy_shard_reward(false, "追猎者")
+			reward += game.roll_enemy_shard_reward(false, "追踪怪")
 		seed(4242)
 		game.elapsed = 90.0
-		var probe = game.spawn_enemy("追猎者")
+		var probe = game.spawn_enemy("追踪怪")
 		readings[pressure] = {"reward": reward, "health": probe.max_health,
 			"damage": probe.damage, "speed": probe.speed,
 			"distance": probe.global_position.distance_to(game.player.global_position)}
@@ -240,13 +240,13 @@ func check_knob_isolation() -> void:
 	# Boss 不参与：它是设计好的 set piece
 	game.run_pressure_scale = 1.0
 	game.elapsed = 90.0
-	var boss_base = game.spawn_enemy("星渊追猎者", true)
+	var boss_base = game.spawn_enemy("赫巡·追赶者", true)
 	var boss_health: float = boss_base.max_health
 	boss_base.queue_free()
 	await process_frame
 	game.run_pressure_scale = 1.15
 	game.elapsed = 90.0
-	var boss_pressured = game.spawn_enemy("星渊追猎者", true)
+	var boss_pressured = game.spawn_enemy("赫巡·追赶者", true)
 	flag(is_equal_approx(boss_pressured.max_health, boss_health), "Boss 血量被压力系数改动了：%.2f vs %.2f" % [boss_health, boss_pressured.max_health])
 	boss_pressured.queue_free()
 	await process_frame

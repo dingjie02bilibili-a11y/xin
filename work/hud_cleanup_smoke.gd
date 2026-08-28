@@ -11,9 +11,15 @@ func run_test() -> void:
 	game.start_game_after_prologue()
 	await process_frame
 	assert(game.active_hand_label == null and game.resonance_bar == null, "Removed auto-cast status still exists")
-	assert(game.time_label.text.begins_with("Boss "), "Timer does not explain that it tracks the next Boss")
+	assert(game.time_label.text.begins_with("下个首领"), "Timer does not explain that it tracks the next Boss")
+	# 守卫/影舞者/星火使的条件被动必须有一个真的存在的标签来显示当前状态，
+	# 否则那段代码会像以前挂在 active_hand_label 上一样，写了却永远不会显示。
+	assert(is_instance_valid(game.passive_state_label), "Conditional passives have no live readout")
 	game.update_skill_list()
-	assert(game.deck_status_label.text.contains("宠物伤害") and game.deck_status_label.text.contains("左侧加算"), "Deck header does not show the current damage formula")
+	# 卡组顶栏原来是一行公式（宠物伤害＝基础值 × … × 左侧加算 × 右侧乘算），
+	# 对 10 岁玩家不可读，已改成大白话。这里钉住新说法，并禁止行话回流。
+	assert(game.deck_status_label.text.contains("左边的牌") and game.deck_status_label.text.contains("右边的牌"), "Deck header does not explain left/right in plain words")
+	assert(not game.deck_status_label.text.contains("加算") and not game.deck_status_label.text.contains("乘算") and not game.deck_status_label.text.contains("倍率"), "Accounting jargon is back in the deck header")
 	assert(not game.deck_status_label.text.contains("卡组 ") and not game.deck_status_label.text.contains("主核心") and not game.deck_status_label.text.contains("最近触发"), "Deck header still shows removed status text")
 	var found_currency_hint := false
 	var found_passive_badge := false

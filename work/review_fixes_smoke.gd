@@ -32,7 +32,7 @@ func run_test() -> void:
 	assert(game.active_core_skill_ids().has("chain"), "Ranger did not start with chain pet")
 
 	# Energy above the release threshold must remain available after the pet casts.
-	var target = game.spawn_enemy("追猎者")
+	var target = game.spawn_enemy("追踪怪")
 	target.global_position = game.skill_entity_origin("chain") + Vector2(90.0, 0.0)
 	target.speed = 0.0
 	var requirement: float = game.pet_energy_requirement("chain")
@@ -58,25 +58,28 @@ func run_test() -> void:
 	print("REVIEW_FIXES_STAGE fragile")
 
 	# Area checks density around the casting pet, even when that pet is far away.
+	# 用暮环而不是弧牙：范围加成只作用在会画圈的宠物身上，弧牙的闪电跳距是写死的，
+	# skill_area_multiplier("chain") 从来没有被任何代码读过。
 	for old_enemy in get_nodes_in_group("enemies"):
 		old_enemy.queue_free()
 	await process_frame
-	var chain_pet = game.skill_entities.get("chain")
-	chain_pet.global_position = game.player.global_position + Vector2(900.0, 0.0)
+	var aura_pet = game.skill_entities.get("aura")
+	aura_pet.global_position = game.player.global_position + Vector2(900.0, 0.0)
 	for offset in [Vector2(-40.0, 0.0), Vector2(40.0, 0.0)]:
-		var nearby = game.spawn_enemy("追猎者")
-		nearby.global_position = chain_pet.global_position + offset
+		var nearby = game.spawn_enemy("追踪怪")
+		nearby.global_position = aura_pet.global_position + offset
 		nearby.speed = 0.0
 	game.equipped_cards.append("area")
 	game.upgrade_levels["area"] = 1
-	assert(game.skill_area_multiplier("chain") > float(game.stats.area) * 1.10, "Area card still checks density around the player")
+	assert(game.skill_area_multiplier("aura") > float(game.stats.area) * 1.10, "Area card still checks density around the player")
+	assert(is_equal_approx(game.skill_area_multiplier("chain"), 1.0), "Chain has a hardcoded range and must not report an area bonus")
 	print("REVIEW_FIXES_STAGE area")
 
 	# A burn-lethal enemy may not deal one last contact hit in the same frame.
 	for old_enemy in get_nodes_in_group("enemies"):
 		old_enemy.queue_free()
 	await process_frame
-	var burning = game.spawn_enemy("追猎者")
+	var burning = game.spawn_enemy("追踪怪")
 	burning.global_position = game.player.global_position
 	burning.speed = 0.0
 	burning.health = 1.0
@@ -124,7 +127,7 @@ func run_test() -> void:
 	print("REVIEW_FIXES_STAGE eternal")
 
 	# Cleanse can be prepared in a shop and blocks the next Boss deck disruption.
-	var affix_source = game.spawn_enemy("星渊追猎者", true)
+	var affix_source = game.spawn_enemy("赫巡·追赶者", true)
 	game.cleanse_ward_charges = 1
 	game.boss_affix_pending = false
 	game.on_boss_affix_requested(affix_source, "sealed_hand", 5.0)

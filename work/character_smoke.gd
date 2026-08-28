@@ -5,7 +5,7 @@ func _initialize() -> void:
 
 func run_test() -> void:
 	var packed := load("res://scenes/main.tscn") as PackedScene
-	var names := ["游侠", "骑士", "星术师", "守卫", "影舞者", "星火使"]
+	var names := ["游侠", "骑士", "魔法师", "守卫", "影舞者", "星火使"]
 	var save = root.get_node_or_null("SaveManager")
 	assert(save != null, "SaveManager autoload missing")
 	var original_save: Dictionary = save.data.duplicate(true)

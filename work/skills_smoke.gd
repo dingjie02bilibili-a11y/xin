@@ -24,7 +24,7 @@ func run_test() -> void:
 	var initial: Vector2 = game.player.position
 	game.use_phase_step()
 	assert(game.player.position.distance_to(initial) > 200.0 and game.player.invulnerable > 0.0, "Phase step did not move or protect player")
-	var enemy = game.spawn_enemy("追猎者")
+	var enemy = game.spawn_enemy("追踪怪")
 	enemy.apply_frost(1.0)
 	assert(enemy.frost_time > 0.0, "Frost effect did not apply")
 	print("SKILLS_SMOKE_OK dash=", game.player.position.distance_to(initial), " thunder=", game.thunder_level)

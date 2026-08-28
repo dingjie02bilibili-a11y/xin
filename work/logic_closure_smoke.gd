@@ -26,7 +26,7 @@ func run_test() -> void:
 
 	# A successful offensive cast consumes only the old resonance. Damage generated
 	# synchronously by that cast must remain for the next hand.
-	var resonance_target = game.spawn_enemy("重甲怪")
+	var resonance_target = game.spawn_enemy("铁甲怪")
 	resonance_target.global_position = game.skill_entity_origin("chain") + Vector2(80.0, 0.0)
 	resonance_target.speed = 0.0
 	resonance_target.max_health = 1000.0
@@ -48,7 +48,7 @@ func run_test() -> void:
 	await clear_enemies()
 
 	# Pure utility pets preserve offensive resonance.
-	# 引力奇点现在会造成范围伤害，理应付共鸣；只剩星辉壁垒是纯防御宠物。
+	# 吸怪黑洞现在会造成范围伤害，理应付气势；只剩护盾罩是纯防御宠物。
 	game.equipped_cards.assign(["aegis"])
 	game.upgrade_levels["aegis"] = 1
 	game.refresh_derived_card_effects()
@@ -62,11 +62,11 @@ func run_test() -> void:
 	assert(game.pet_consumes_resonance("gravity_well"), "Damage-dealing gravity pet should now pay resonance")
 	await clear_enemies()
 
-	# 灼烧强度现在按本次实际伤害结算，闪箔版本仍应额外强化状态。
+	# 燃烧强度现在按本次实际伤害结算，闪光版本仍应额外强化状态。
 	game.equipped_cards.assign(["chain", "burn"])
 	game.refresh_derived_card_effects()
-	var plain_burn = game.spawn_enemy("重甲怪")
-	var foil_burn = game.spawn_enemy("重甲怪")
+	var plain_burn = game.spawn_enemy("铁甲怪")
+	var foil_burn = game.spawn_enemy("铁甲怪")
 	game.stats.crit = 0.0
 	game.card_editions.erase("chain")
 	game.calculate_skill_damage(20.0, "chain", plain_burn)
@@ -84,7 +84,7 @@ func run_test() -> void:
 	await process_frame
 	var execute_targets: Array = []
 	for offset in [Vector2(50.0, 0.0), Vector2(70.0, 0.0)]:
-		var target = game.spawn_enemy("重甲怪")
+		var target = game.spawn_enemy("铁甲怪")
 		target.global_position = game.skill_entity_origin("execute") + offset
 		target.speed = 0.0
 		target.max_health = 1000.0
@@ -105,7 +105,7 @@ func run_test() -> void:
 	game.upgrade_levels["phase_step"] = 1
 	game.refresh_derived_card_effects()
 	await process_frame
-	var phase_target = game.spawn_enemy("追猎者")
+	var phase_target = game.spawn_enemy("追踪怪")
 	phase_target.global_position = game.skill_entity_origin("phase_step") + Vector2(90.0, 0.0)
 	phase_target.speed = 0.0
 	var phase_requirement: float = game.pet_energy_requirement("phase_step")
@@ -167,7 +167,7 @@ func run_test() -> void:
 	assert(game.equipped_cards.size() >= 0, "Legacy last-pet sale guard is gone")
 	assert(game.lone_star_protocol_active(), "Lone Star protocol did not activate without sustainable offense")
 	assert(game.directed_shop_pending, "Lone Star protocol did not request a directed shop recovery")
-	var spark_target = game.spawn_enemy("重甲怪")
+	var spark_target = game.spawn_enemy("铁甲怪")
 	spark_target.global_position = game.player.global_position + Vector2(80.0, 0.0)
 	spark_target.speed = 0.0
 	var spark_health: float = spark_target.health
@@ -197,7 +197,7 @@ func run_test() -> void:
 	game.upgrade_levels["glass"] = 1
 	game.upgrade_levels["gamble"] = 1
 	var copied_glass: Dictionary = game.copied_card_effect("glass", 0.0, 0, null, 1, false, false)
-	# 训练卡不占卡槽、永远进不了卡组，蓝图不可能复制到它；用同样提供暴击的赌命协议。
+	# 训练卡不占卡槽、永远进不了卡组，蓝图不可能复制到它；用同样提供暴击的拼命一击。
 	var copied_crit: Dictionary = game.copied_card_effect("gamble", 0.0, 0, null, 1, false, false)
 	var unsupported_copy: Dictionary = game.copied_card_effect("aegis", 0.0, 0, null, 1, false, false)
 	assert(float(copied_glass.multiplier) > 1.0 and float(copied_crit.crit_bonus) > 0.0, "Copy rules still silently omit damage modifiers")
@@ -206,9 +206,9 @@ func run_test() -> void:
 	# Suppressed cards no longer contribute tags, adjacency, sequence or energy.
 	game.equipped_cards.assign(["sequence_protocol", "glass", "burn", "chain"])
 	var unsuppressed_energy: int = game.active_hand_energy(game.active_star_patterns())
-	assert(game.active_star_patterns().has("顺序式"), "Sequence precondition missing before suppression")
+	assert(game.active_star_patterns().has("四连排"), "Sequence precondition missing before suppression")
 	game.boss_card_disruptions["glass"] = {"mode":"sealed", "remaining":2.0}
-	assert(not game.active_star_patterns().has("顺序式"), "Suppressed middle card still completed sequence pattern")
+	assert(not game.active_star_patterns().has("四连排"), "Suppressed middle card still completed sequence pattern")
 	assert(game.active_hand_energy(game.active_star_patterns()) < unsuppressed_energy, "Suppressed card still contributed full hand energy")
 	game.boss_card_disruptions.clear()
 
@@ -223,7 +223,7 @@ func run_test() -> void:
 	assert(not capped_seals.has("gold") and not capped_seals.has("blue"), "Capped seals remain purchasable with no possible payoff")
 
 	# Echo captures the final post-reaction amount at the damage boundary.
-	var echo_target = game.spawn_enemy("重甲怪")
+	var echo_target = game.spawn_enemy("铁甲怪")
 	var echo_capture: Array[Dictionary] = []
 	game.echo_damage_captures["nova"] = echo_capture
 	game.deal_skill_damage(echo_target, 123.0, "nova", Vector2.ZERO, "reaction")
@@ -254,13 +254,13 @@ func run_test() -> void:
 	# Danger contract applies the advertised independent health/damage multipliers.
 	game.elapsed = 120.0
 	game.danger_contract.clear()
-	var baseline = game.spawn_enemy("重甲怪")
+	var baseline = game.spawn_enemy("铁甲怪")
 	var baseline_health: float = baseline.max_health
 	var baseline_damage: float = baseline.damage
 	baseline.queue_free()
 	await process_frame
 	game.danger_contract = {"kills":0, "target":25}
-	var contracted = game.spawn_enemy("重甲怪")
+	var contracted = game.spawn_enemy("铁甲怪")
 	assert(absf(contracted.max_health / baseline_health - 1.25) < 0.001, "Danger contract health differs from its tooltip")
 	assert(absf(contracted.damage / baseline_damage - 1.18) < 0.001, "Danger contract damage is being amplified twice")
 

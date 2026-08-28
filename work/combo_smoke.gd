@@ -43,7 +43,7 @@ func run_test() -> void:
 	target.shield_time = 2.0
 	target.take_damage(10.0, Vector2.ZERO, "direct")
 	assert(is_equal_approx(target.health, 90.0), "Prism shield must not reduce skill damage")
-	# 棱镜屏障真正生效的地方是供能：蓝盾期间供能弹只送一半能量。
+	# 蓝色护盾真正生效的地方是充能：蓝盾期间能量弹只送一半能量。
 	target.is_boss = true
 	target.set_affixes(["prism_shield"] as Array[String])
 	target.add_to_group("bosses")

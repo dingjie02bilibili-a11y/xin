@@ -15,11 +15,11 @@ func run_test() -> void:
 			var chapter_one_affixes: Array[String] = game.roll_boss_affixes(1, style)
 			for forbidden in ["sealed_hand", "pet_thief", "pet_charm", "reverse_shuffle"]:
 				assert(not chapter_one_affixes.has(forbidden), "Chapter 1 rolled deprivation: " + forbidden)
-	# 只剩一只宠物时不应被封印/夺走/魅惑，自行构造该状态再验证
+	# 只剩一只宠物时不应被封印/夺走/迷惑，自行构造该状态再验证
 	game.equipped_cards.assign([str(game.active_core_skill_ids()[0])])
 	game.refresh_derived_card_effects()
 	await process_frame
-	var safety_boss = game.spawn_enemy("星渊禁锢者", true)
+	var safety_boss = game.spawn_enemy("弥垣·关门人", true)
 	game.apply_boss_card_seal(safety_boss, 4.2)
 	game.apply_boss_pet_theft(safety_boss, 5.2)
 	game.apply_boss_pet_charm(safety_boss, 4.5)
@@ -28,7 +28,7 @@ func run_test() -> void:
 	await process_frame
 	print("BOSS_SMOKE_START")
 	game.player.selection_protected = true
-	for boss_kind in ["星渊追猎者", "星渊禁锢者", "星渊裁决者"]:
+	for boss_kind in ["赫巡·追赶者", "弥垣·关门人", "零号·守塔机器"]:
 		game.spawn_enemy(boss_kind, true)
 	var bosses := get_nodes_in_group("bosses")
 	assert(bosses.size() == 3, "Expected all three boss profiles")

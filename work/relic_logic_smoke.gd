@@ -31,9 +31,12 @@ func run_test() -> void:
 	assert(is_equal_approx(game.pet_energy_requirement("aegis"), aegis_energy_before), "Character relic still modified Aegis pet energy")
 	assert(not game.active_core_skill_ids().has("aegis"), "Character relic incorrectly granted an unequipped pet")
 
-	var base_area: float = game.skill_area_multiplier("chain")
+	# 指路罗盘放大的是「会画圈」的宠物范围。弧牙的闪电跳距是写死的常数，
+	# 从来不读 skill_area_multiplier，所以这里要用暮环来验（游侠开局就带着它）。
+	var base_area: float = game.skill_area_multiplier("aura")
 	game.select_boss_relic("rift_compass")
-	assert(is_equal_approx(game.skill_area_multiplier("chain"), base_area * 1.15), "Rift compass global pet range was not applied")
+	assert(is_equal_approx(game.skill_area_multiplier("aura"), base_area * 1.15), "Rift compass global pet range was not applied")
+	assert(is_equal_approx(game.skill_area_multiplier("chain"), 1.0), "Chain has a fixed jump range and must stay unscaled")
 	assert(is_equal_approx(game.skill_area_multiplier("gravity_well"), base_area * 1.15 * 1.35), "Rift compass gravity bonus was not applied")
 
 	var crit_before: float = float(game.stats.crit)
@@ -41,7 +44,7 @@ func run_test() -> void:
 	assert(is_equal_approx(float(game.stats.crit), minf(0.85, crit_before + 0.10)), "Judge spark did not improve pet crit")
 	assert(is_equal_approx(game.bonus_crit_damage, 0.20), "Judge spark did not improve pet crit damage")
 
-	game.spawn_enemy("追猎者")
+	game.spawn_enemy("追踪怪")
 	await process_frame
 	var enemy = get_nodes_in_group("enemies")[0]
 	enemy.speed = 0.0
