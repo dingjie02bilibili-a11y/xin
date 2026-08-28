@@ -25,3 +25,6 @@ work/perf_out.txt
 
 # 冒烟测试输出
 work/smoke_final.txt
+work/sim_before.txt
+work/sim_mid.txt
+work/sim_after.txt
