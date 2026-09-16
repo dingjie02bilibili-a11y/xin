@@ -356,8 +356,18 @@ const UPGRADES := [
 	{"id":"moon_interest", "name":"存钱罐", "desc":"离开商店时，身上剩的星屑越多额外送得越多（10%，最多5）", "max":1, "icon":"☾"}
 ]
 
+# 小游戏拿到的不是一块干净的全屏画布：刘海、圆角和底部横条会切掉四周，
+# 右上角还永远压着微信的胶囊按钮。两种遮挡得分开处理——安全区是整圈内缩，
+# 而胶囊只挡右上角那一小块，为它整圈让开会白白丢掉一大片屏幕。
+# 贴着胶囊摆东西会显得挤，让开一点。
+const MENU_BUTTON_GAP := 14.0
+
 var state := GameState.MENU
 var ui_layer: CanvasLayer
+# 左、上、右、下，已换算成设计坐标。
+var safe_insets := Vector4.ZERO
+# 胶囊按钮，换算到 UI 层自己的坐标系；size 为零表示这个平台没有胶囊。
+var menu_button_rect := Rect2()
 var touch_stick: TouchStick
 var hud: Control
 var player: Player
@@ -537,6 +547,7 @@ var passive_state_label: Label
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	randomize()
+	refresh_platform_insets()
 	build_touch_stick()
 	queue_redraw()
 	show_main_menu()
@@ -554,6 +565,75 @@ func build_touch_stick() -> void:
 
 # 只有在真正能走位的时候才收手指：暂停、升级选牌、逛商店时按屏幕
 # 不该把角色推出去。
+func refresh_platform_insets() -> void:
+	safe_insets = Vector4.ZERO
+	menu_button_rect = Rect2()
+	if not OS.has_feature("web"):
+		return
+	# 小游戏平台禁掉了 eval，JavaScriptBridge.eval 连 "1+1" 都返回 null；
+	# get_interface 走的是另一条绑定，不受影响，能直接拿到 wx 的 API。
+	# 引擎自己的 DisplayServer.get_display_safe_area() 在这里只会返回整块屏幕。
+	var wx_api = JavaScriptBridge.get_interface("wx")
+	if wx_api == null:
+		return
+	var info = wx_api.getSystemInfoSync()
+	if info == null:
+		return
+	var css_size := Vector2(float(info.windowWidth), float(info.windowHeight))
+	if css_size.x <= 0.0 or css_size.y <= 0.0:
+		return
+	# 微信报的是 CSS 像素，UI 用的是设计坐标，按 viewport 的比例换算。
+	var viewport := get_viewport_rect().size
+	var scale := viewport / css_size
+	var area = info.safeArea
+	if area != null:
+		safe_insets = Vector4(
+			float(area.left) * scale.x,
+			float(area.top) * scale.y,
+			(css_size.x - float(area.right)) * scale.x,
+			(css_size.y - float(area.bottom)) * scale.y)
+	var capsule = wx_api.getMenuButtonBoundingClientRect()
+	if capsule == null or float(capsule.width) <= 0.0:
+		return
+	# UI 层整体内缩又缩放过，胶囊要换算到同一套坐标里才对得上。
+	var usable := viewport - Vector2(safe_insets.x + safe_insets.z, safe_insets.y + safe_insets.w)
+	var shrink := Vector2(maxf(usable.x / viewport.x, 0.001), maxf(usable.y / viewport.y, 0.001))
+	menu_button_rect = Rect2(
+		(float(capsule.left) * scale.x - safe_insets.x) / shrink.x,
+		(float(capsule.top) * scale.y - safe_insets.y) / shrink.y,
+		float(capsule.width) * scale.x / shrink.x,
+		float(capsule.height) * scale.y / shrink.y)
+
+# 把整个 UI 层缩进安全区里。缩放而不是逐个界面改边距：15 个界面各有各的
+# 摆法，从最外层一次性让开是唯一不会漏的做法。
+func apply_safe_area() -> void:
+	if not is_instance_valid(ui_layer):
+		return
+	var viewport := get_viewport_rect().size
+	if viewport.x <= 0.0 or viewport.y <= 0.0:
+		return
+	var usable := viewport - Vector2(safe_insets.x + safe_insets.z, safe_insets.y + safe_insets.w)
+	if usable.x <= 0.0 or usable.y <= 0.0:
+		return
+	ui_layer.offset = Vector2(safe_insets.x, safe_insets.y)
+	ui_layer.scale = usable / viewport
+
+# 贴着屏幕右上角放东西时，至少要从这个高度以下开始，才不会被胶囊压住。
+func menu_button_drop() -> float:
+	if menu_button_rect.size == Vector2.ZERO:
+		return 0.0
+	return maxf(0.0, menu_button_rect.end.y + MENU_BUTTON_GAP)
+
+# 右上角那颗按钮要是跟胶囊叠在一起，就挪到胶囊左边同一行。往下挪会压住
+# 下面那排分类标签；往左挪只占标题栏里本来就空着的那一段。
+func dodge_menu_button(control: Control) -> void:
+	if menu_button_rect.size == Vector2.ZERO:
+		return
+	var size := control.size if control.size != Vector2.ZERO else control.custom_minimum_size
+	if not Rect2(control.position, size).intersects(menu_button_rect.grow(MENU_BUTTON_GAP)):
+		return
+	control.position.x = menu_button_rect.position.x - MENU_BUTTON_GAP - size.x
+
 func touch_controls_active() -> bool:
 	return state == GameState.PLAYING and not get_tree().paused
 
@@ -668,6 +748,7 @@ func clear_ui() -> void:
 	ui_layer = CanvasLayer.new()
 	ui_layer.layer = 20
 	add_child(ui_layer)
+	apply_safe_area()
 
 func clear_game() -> void:
 	get_tree().paused = false
@@ -1170,6 +1251,7 @@ func show_story_archive(category := "主线纪事", selected_id := "") -> void:
 	var back := make_compact_button("返回主菜单", Vector2(216, 42))
 	back.name = "ArchiveBack"
 	back.position = Vector2(1040, 10)
+	dodge_menu_button(back)
 	back.pressed.connect(show_main_menu)
 	root.add_child(back)
 	var tabs := HBoxContainer.new()
@@ -1302,10 +1384,15 @@ func show_main_menu() -> void:
 	left.add_spacer(false)
 	var stats_text := "成就 %d / %d   ·   每次远征都从零开始" % [SaveManager.data.achievements.size(), ACHIEVEMENTS.size()]
 	left.add_child(make_label(stats_text, 18, Color("718bad")))
+	# 菜单面板贴着右上角，正好是胶囊按钮待的地方——它压住的是「开始游戏」，
+	# 不让开就等于这个按钮按不着。
+	var right_holder := MarginContainer.new()
+	right_holder.add_theme_constant_override("margin_top", int(maxf(0.0, menu_button_drop() - 54.0)))
+	row.add_child(right_holder)
 	var right_panel := PanelContainer.new()
 	right_panel.custom_minimum_size = Vector2(430, 0)
 	right_panel.add_theme_stylebox_override("panel", panel_style(Color(0.035, 0.075, 0.14, 0.94), 22, Color("244e78"), 2))
-	row.add_child(right_panel)
+	right_holder.add_child(right_panel)
 	var menu := VBoxContainer.new()
 	menu.add_theme_constant_override("separation", 10)
 	right_panel.add_child(menu)
@@ -1749,6 +1836,13 @@ func place_in_hud(control: Control, design_rect: Rect2, h: int, v: int) -> void:
 		control.offset_left = design_rect.position.x
 		control.offset_right = design_rect.position.x + design_rect.size.x - DESIGN_SIZE.x
 		return
+	# 贴右上角的那几个（特性面板、暂停键）正好落在胶囊按钮底下，往下挪开。
+	if h == HUD_RIGHT and v == HUD_TOP:
+		var drop := menu_button_drop()
+		if drop > control.offset_top:
+			var height := control.offset_bottom - control.offset_top
+			control.offset_top = drop
+			control.offset_bottom = drop + height
 	var ax := 0.0 if h == HUD_LEFT else (0.5 if h == HUD_CENTER else 1.0)
 	control.anchor_left = ax
 	control.anchor_right = ax
