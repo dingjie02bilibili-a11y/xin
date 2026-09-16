@@ -16,7 +16,8 @@ const DifficultyDirector = preload("res://scripts/difficulty_director.gd")
 
 enum GameState { MENU, PLAYING, LEVEL_UP, PAUSED, GAME_OVER }
 
-const WORLD_DRAW_RADIUS := Vector2(1900, 1300)
+# 背景网格往可见区域外多画一点，免得相机移动时边缘露白。
+const GRID_MARGIN := 140.0
 const MAINLINE_BOSS_SCHEDULE := [60, 120, 180, 240, 300, 355]
 # 逐章显式指定，保证 Boss 血量曲线单调递增（每章约 +33%）
 const MAINLINE_BOSS_HEALTH := [560.0, 830.0, 1180.0, 1620.0, 2140.0, 2760.0]
@@ -557,8 +558,13 @@ func touch_controls_active() -> bool:
 	return state == GameState.PLAYING and not get_tree().paused
 
 func _draw() -> void:
-	var focus := player.global_position if is_instance_valid(player) else Vector2.ZERO
-	var visible_world := Rect2(focus - WORLD_DRAW_RADIUS, WORLD_DRAW_RADIUS * 2.0)
+	# 按真正看得见的那块世界来画，而不是写死的 3800×2600。两个方向都吃过亏：
+	# 手机屏越长，Godot 把 viewport 拉得越高，写死的范围盖不住，背景会在半路
+	# 断掉露出黑边（竖屏下只铺了不到一半）；反过来在普通屏幕上它又画了一大片
+	# 屏幕外的网格，白白多出几十条绘制命令——而每帧的绘制命令数正是这个游戏
+	# 的性能瓶颈所在。
+	var world_view: Rect2 = get_canvas_transform().affine_inverse() * get_viewport_rect()
+	var visible_world := world_view.grow(GRID_MARGIN)
 	draw_rect(visible_world, Color("071129"), true)
 	var grid_color := Color(0.13, 0.25, 0.42, 0.22)
 	var left := int(floor(visible_world.position.x / 100.0)) * 100
