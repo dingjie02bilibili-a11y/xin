@@ -19,6 +19,7 @@ config/icon="res://icon.svg"
 [autoload]
 
 SaveManager="*res://scripts/save_manager.gd"
+Wx="*res://scripts/wx_platform.gd"
 
 [display]
 

@@ -13,6 +13,8 @@ const DEFAULT_DATA := {
 	"achievements": [],
 	"story_read": [],
 	"intro_seen": false,
+	# 好友排行榜要的是「历史最佳」，而战绩流水只留最近 HISTORY_LIMIT 局，推不出来。
+	"best_kills": 0,
 	"run_history": []
 }
 

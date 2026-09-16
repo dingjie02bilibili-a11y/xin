@@ -33,6 +33,20 @@ CACHE = os.path.join(ROOT, "work", "mgcache")
 TEMPLATE = "minigame4.3.0.3.tpz"
 TEMPLATE_URL = f"https://github.com/godothub/godot-minigame/releases/download/4.3.0/{TEMPLATE}"
 PCK_NAME = "game-pck.bin"
+SHARE_MARKER = "// xin: share menu"
+SHARE_SNIPPET = """
+// xin: share menu
+wx.showShareMenu({ menus: ['shareAppMessage', 'shareTimeline'] });
+const xinShareCard = () => ({
+    title: '和星灵伙伴一起闯星渊、修好大灯塔！',
+    imageUrl: 'images/share.png',
+    query: 'from=menu',
+});
+wx.onShareAppMessage(xinShareCard);
+if (wx.onShareTimeline) {
+    wx.onShareTimeline(() => ({ title: '星渊幸存者', imageUrl: 'images/share.png', query: 'from=timeline' }));
+}
+"""
 
 
 def run(args, label):
@@ -44,6 +58,13 @@ def run(args, label):
 
 def export_pck():
     os.makedirs(WEB_OUT, exist_ok=True)
+    # The shipped font only holds the characters the project uses, so any new
+    # line of text is a row of boxes until it's rebuilt. Rebuilding every time
+    # is cheap (sources are cached) and means nobody has to remember.
+    run([sys.executable, os.path.join(ROOT, "tools", "build_font.py")], "rebuilding font subset")
+    # outputs/ sits inside the Godot project. Without this, the editor imports
+    # every png the build drops there and litters them with .import files.
+    open(os.path.join(ROOT, "outputs", ".gdignore"), "a").close()
     run([GODOT, "--headless", "--path", ROOT, "--import"], "importing project")
     run([GODOT, "--headless", "--path", ROOT, "--export-release", "Web"], "exporting web build")
 
@@ -100,7 +121,7 @@ def main():
                      "(cli.bat close --project ...), then rerun")
     os.makedirs(OUT, exist_ok=True)
     shutil.copytree(shell, OUT, dirs_exist_ok=True,
-                    ignore=shutil.ignore_patterns(".plugincache", "*.md"))
+                    ignore=shutil.ignore_patterns(".plugincache", "*.md", "*.import"))
 
     # The shell ships a demo pack; ours replaces it, and engine/game.js is
     # the one line that names it.
@@ -114,6 +135,21 @@ def main():
     source = source.replace("/engine/demo-pck.bin", f"/engine/{PCK_NAME}")
     with open(entry, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(source)
+
+    # Passive sharing -- the "..." menu's forward and moments entries -- needs a
+    # listener that *returns* the share card. A GDScript callback can't return
+    # a value to JS, so this lives in the shell's own game.js instead of the
+    # game. The card image ships in the main package so it's there before the
+    # engine subpackage finishes loading.
+    shutil.copy2(os.path.join(ROOT, "tools", "minigame_assets", "share.png"),
+                 os.path.join(OUT, "images", "share.png"))
+    shell_entry = os.path.join(OUT, "game.js")
+    with open(shell_entry, encoding="utf-8") as fh:
+        shell_source = fh.read()
+    if SHARE_MARKER not in shell_source:
+        shell_source += SHARE_SNIPPET
+        with open(shell_entry, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(shell_source)
 
     # The game is built around a 1280x720 field of view, and the HUD anchors
     # to the edges of whatever aspect it gets -- so it wants the phone held

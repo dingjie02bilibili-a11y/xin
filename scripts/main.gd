@@ -363,6 +363,8 @@ const UPGRADES := [
 const MENU_BUTTON_GAP := 14.0
 
 var state := GameState.MENU
+# 看广告复活每局只给一次。
+var revived_this_run := false
 var ui_layer: CanvasLayer
 # 左、上、右、下，已换算成设计坐标。
 var safe_insets := Vector4.ZERO
@@ -728,7 +730,14 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and event.keycode == KEY_F2 and state == GameState.PLAYING and (OS.has_feature("editor") or test_mode):
 		gain_star_shards(10)
 
+func place_game_club_button(slot: Control) -> void:
+	await get_tree().process_frame
+	if not is_instance_valid(slot) or state != GameState.MENU:
+		return
+	Wx.show_game_club(ui_layer.transform * slot.get_global_rect())
+
 func clear_ui() -> void:
+	Wx.hide_game_club()
 	card_replace_overlay = null
 	shop_overlay = null
 	shop_goods_row = null
@@ -1221,7 +1230,7 @@ func show_story_prologue() -> void:
 	scroll.add_child(story)
 	box.add_child(scroll)
 	var begin := make_button("出发救援", Vector2(0, 58))
-	begin.pressed.connect(func(): SaveManager.data.intro_seen = true; SaveManager.save(); start_game_after_prologue())
+	begin.pressed.connect(func(): Wx.report_event("prologue", {"action": "begin"}); SaveManager.data.intro_seen = true; SaveManager.save(); start_game_after_prologue())
 	box.add_child(begin)
 	var back := make_button("暂时返回", Vector2(0, 46))
 	back.pressed.connect(show_main_menu)
@@ -1383,6 +1392,19 @@ func show_main_menu() -> void:
 	left.add_child(subtitle)
 	left.add_spacer(false)
 	var stats_text := "成就 %d / %d   ·   每次远征都从零开始" % [SaveManager.data.achievements.size(), ACHIEVEMENTS.size()]
+	if Wx.is_available():
+		# 游戏圈按钮是微信的原生按钮，盖在画布上。这里只占个位置、配一行字，
+		# 等排版算完再把这块的屏幕坐标交给 Wx 去摆按钮。
+		var club_row := HBoxContainer.new()
+		club_row.add_theme_constant_override("separation", 12)
+		left.add_child(club_row)
+		var club_slot := Control.new()
+		club_slot.custom_minimum_size = Vector2(52, 52)
+		club_row.add_child(club_slot)
+		var club_label := make_label("玩家社区 · 反馈建议", 17, Color("9bb4d1"))
+		club_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		club_row.add_child(club_label)
+		place_game_club_button.call_deferred(club_slot)
 	left.add_child(make_label(stats_text, 18, Color("718bad")))
 	# 菜单面板贴着右上角，正好是胶囊按钮待的地方——它压住的是「开始游戏」，
 	# 不让开就等于这个按钮按不着。
@@ -1420,7 +1442,7 @@ func show_main_menu() -> void:
 	sound.add_theme_font_size_override("font_size", 18)
 	sound.toggled.connect(func(on: bool): SaveManager.data.settings.sound = on; SaveManager.save())
 	menu.add_child(sound)
-	menu.add_child(make_label("WASD / 方向键移动  ·  ESC 暂停", 15, Color("718bad")))
+	menu.add_child(make_label("按住屏幕拖动走位  ·  右上角暂停" if Wx.is_available() else "WASD / 方向键移动  ·  ESC 暂停", 15, Color("718bad")))
 
 func show_character_select() -> void:
 	clear_ui()
@@ -1769,7 +1791,7 @@ func start_game_after_prologue() -> void:
 	player.position = Vector2.ZERO
 	add_child(player)
 	player.setup(str(SaveManager.data.selected_character))
-	player.died.connect(end_run.bind(false))
+	player.died.connect(on_player_died)
 	player.health_changed.connect(on_health_changed)
 	player.hurt.connect(on_player_hurt)
 	player.healed.connect(on_player_healed)
@@ -1810,6 +1832,13 @@ func start_game_after_prologue() -> void:
 	build_hud()
 	show_toast("第一关 · 迷路的领航员\n%s" % character_opening_line(player.character_name), Color("70d7ff"), 3.0)
 	play_tone(440, 0.12, 0.2)
+	revived_this_run = false
+	Wx.keep_screen_on(true)
+	Wx.report_event("run_start", {
+		"character": player.character_name,
+		"pressure": int(round(run_pressure_scale * 100.0)),
+		"history_runs": SaveManager.data.run_history.size()
+	})
 
 # HUD 按 1280×720 的设计稿画，但手机屏比 16:9 长得多，画布用 expand 拉开后
 # 宽度会多出一截——贴右边、贴下边的控件不锚住就会飘到画面外面去。
@@ -2950,6 +2979,9 @@ func on_player_hurt(amount: float) -> void:
 	var heavy_hit_threshold := maxf(10.0, player.max_health * 0.09) if is_instance_valid(player) else 10.0
 	if amount >= heavy_hit_threshold:
 		shake_camera(minf(12.0, 4.0 + amount * 0.35))
+	# 结算后怪物还会继续撞已经停下的角色，受击照样触发——那时候不该再震。
+	if state == GameState.PLAYING and bool(SaveManager.data.settings.screenshake):
+		Wx.vibrate("heavy" if amount >= heavy_hit_threshold else "light")
 	if is_instance_valid(player):
 		if player.character_name == "骑士":
 			for defensive_pet in ["aegis", "aura", "blade_dance"]:
@@ -3076,7 +3108,7 @@ func close_run_bucket() -> void:
 	if run_chapter_rows.size() >= RUN_SLICE_LIMIT:
 		return
 	var samples := maxf(1.0, float(bucket.samples))
-	run_chapter_rows.append({
+	var row := {
 		"ch": int(bucket.ch),
 		"secs": elapsed - float(bucket.start),
 		"kills": kills - int(bucket.kills),
@@ -3085,6 +3117,21 @@ func close_run_bucket() -> void:
 		"alive": float(bucket.alive_sum) / samples,
 		"severed": float(bucket.severed) / samples * 100.0,
 		"hp": (player.health / maxf(1.0, player.max_health) * 100.0) if is_instance_valid(player) else 0.0
+	}
+	run_chapter_rows.append(row)
+	# 这就是本地心流判断用的那份切片，原样送一份到 We分析：哪一章受伤多、
+	# 哪一章场上怪堆起来了、宠物绳被扯断得多不多，拿全体玩家的数据来看。
+	Wx.report_event("chapter_slice", {
+		"chapter": int(row.ch),
+		"secs": int(round(float(row.secs))),
+		"kills": int(row.kills),
+		"damage": int(round(float(row.dmg))),
+		"hands": int(row.hands),
+		"alive": int(round(float(row.alive))),
+		"severed_pct": int(round(float(row.severed))),
+		"hp_pct": int(round(float(row.hp))),
+		"flow": int(round(flow_pressure * 100.0)),
+		"endless": 1 if endless_mode else 0
 	})
 
 func build_run_summary(victory: bool) -> Dictionary:
@@ -4331,8 +4378,18 @@ func on_enemy_defeated(enemy: Enemy, value: int) -> void:
 					show_toast("蓝贴纸 · 帮你练熟了%d个阵型" % completed_research, Color("70d7ff"), 1.0)
 		clear_boss_card_disruptions(enemy)
 		boss_kills += 1
-		if enemy.has_meta("spawn_elapsed") and run_boss_ttk.size() < RUN_SLICE_LIMIT:
-			run_boss_ttk.append(elapsed - float(enemy.get_meta("spawn_elapsed")))
+		var boss_ttk := elapsed - float(enemy.get_meta("spawn_elapsed")) if enemy.has_meta("spawn_elapsed") else -1.0
+		if boss_ttk >= 0.0 and run_boss_ttk.size() < RUN_SLICE_LIMIT:
+			run_boss_ttk.append(boss_ttk)
+		Wx.vibrate("medium")
+		Wx.report_event("boss_kill", {
+			"boss": enemy.kind,
+			"boss_index": boss_kills,
+			"ttk": int(round(boss_ttk)),
+			"hp_pct": int(round(player.health / maxf(1.0, player.max_health) * 100.0)),
+			"elapsed": int(round(elapsed)),
+			"endless": 1 if endless_mode else 0
+		})
 		# 终章的压力主要来自群怪的持续接触伤害，护甲成长正好作用在这里。
 		player.increase_max_health(BOSS_CLEAR_MAX_HEALTH)
 		player.armor += BOSS_CLEAR_ARMOR
@@ -5482,6 +5539,7 @@ func reroll_shop() -> void:
 	star_shards -= cost
 	spent_star_shards += cost
 	shop_reroll_count += 1
+	Wx.report_event("shop_reroll", {"cost": cost, "count": shop_reroll_count, "chapter": current_mainline_chapter()})
 	award_achievement("shop_reroll")
 	prepare_shop_goods(false)
 	refresh_shop_view()
@@ -5508,6 +5566,14 @@ func purchase_shop_offer(index: int) -> void:
 				can_pay = can_pay or spendable_after_shard_income(card_sell_value(owned_id)) >= price
 	if not can_pay:
 		return
+	Wx.report_event("shop_buy", {
+		"kind": str(offer.get("kind", "card")),
+		"item": str(offer.get("id", "")),
+		"price": price,
+		"shards": star_shards,
+		"chapter": current_mainline_chapter(),
+		"endless": 1 if endless_mode else 0
+	})
 	match str(offer.get("kind", "card")):
 		"voucher":
 			star_shards -= price
@@ -6026,6 +6092,61 @@ func game_delay(seconds: float) -> bool:
 			return false
 	return token == run_token
 
+# 死亡先问一句要不要看广告复活。广告没启用（Wx.rewarded_ready() 为 false）
+# 时这里就等于原来的 end_run(false)，玩家看不到任何广告入口。
+# 一局只给一次；无尽模式不给，无尽本来就是「打到倒下为止」。
+func on_player_died() -> void:
+	if finished_run:
+		return
+	if revived_this_run or endless_mode or not Wx.rewarded_ready():
+		end_run(false)
+		return
+	show_revive_offer()
+
+func show_revive_offer() -> void:
+	get_tree().paused = true
+	var root := full_rect_control()
+	root.process_mode = Node.PROCESS_MODE_ALWAYS
+	ui_layer.add_child(root)
+	add_dim_background(root, 0.72)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	root.add_child(center)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 14)
+	center.add_child(box)
+	var title := make_label("能量快用完了！", 40, Color("facc15"))
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(title)
+	var hint := make_label("看一段短视频，星灵会把你拉回战场（每局一次）", 20, Color("c7d7eb"))
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(hint)
+	var watch := make_button("看视频，继续远征", Vector2(520, 58))
+	var give_up := make_button("结束这次远征", Vector2(520, 48))
+	watch.pressed.connect(func():
+		watch.disabled = true
+		give_up.disabled = true
+		Wx.show_rewarded("revive", func(watched: bool):
+			root.queue_free()
+			if watched:
+				revive_player()
+			else:
+				get_tree().paused = false
+				end_run(false)))
+	give_up.pressed.connect(func(): root.queue_free(); get_tree().paused = false; end_run(false))
+	box.add_child(watch)
+	box.add_child(give_up)
+
+func revive_player() -> void:
+	revived_this_run = true
+	get_tree().paused = false
+	if not is_instance_valid(player):
+		end_run(false)
+		return
+	player.heal(player.max_health * 0.5)
+	player.invulnerable = 3.0
+	show_toast("星灵把你拉了回来！3 秒无敌", Color("4ade80"), 1.6)
+
 func end_run(victory: bool) -> void:
 	if finished_run:
 		return
@@ -6040,7 +6161,33 @@ func end_run(victory: bool) -> void:
 	award_achievement("first_expedition")
 	check_achievement_progress()
 	close_run_bucket()
-	SaveManager.finish_run(build_run_summary(victory))
+	var run_summary := build_run_summary(victory)
+	SaveManager.finish_run(run_summary)
+	Wx.keep_screen_on(false)
+	if not victory:
+		Wx.vibrate("heavy")
+	Wx.report_event("run_end", {
+		"character": str(run_summary.character),
+		"mode": str(run_summary.mode),
+		"victory": 1 if victory else 0,
+		"seconds": int(round(float(run_summary.seconds))),
+		"chapter": int(run_summary.chapter),
+		"boss_kills": int(run_summary.boss_kills),
+		"wave": int(run_summary.wave),
+		"kills": int(run_summary.kills),
+		"damage": int(round(float(run_summary.damage))),
+		"earned": int(run_summary.earned),
+		"spent": int(run_summary.spent),
+		"deck": int(run_summary.deck),
+		"pets": int(run_summary.pets),
+		"pressure": int(round(float(run_summary.scale) * 100.0)),
+		"flow": int(round(float(run_summary.flow) * 100.0)),
+		"revived": 1 if revived_this_run else 0
+	})
+	if kills > int(SaveManager.data.get("best_kills", 0)):
+		SaveManager.data.best_kills = kills
+		SaveManager.save()
+		Wx.submit_rank(kills)
 	clear_ui()
 	var root := full_rect_control()
 	ui_layer.add_child(root)
@@ -6086,6 +6233,15 @@ func end_run(victory: bool) -> void:
 			story_button.add_theme_font_size_override("font_size", 15)
 			story_button.pressed.connect(show_story_archive.bind(str(entry.category), str(entry.id)))
 			discovery_row.add_child(story_button)
+	if Wx.is_available():
+		var share_title := "我在星渊幸存者修好了大灯塔，一起来闯星渊！"
+		if not victory:
+			# 一关都没过时「打过了 0 关」读起来像在嘲讽自己，改报坚持了多久。
+			var progress := "打过了 %d 关" % mini(boss_kills, 6) if boss_kills > 0 else "坚持了 %s" % format_time(elapsed)
+			share_title = "我在星渊幸存者%s、击败 %d 只怪，你能走多远？" % [progress, kills]
+		var share_button := make_button("分享给朋友", Vector2(720, 46))
+		share_button.pressed.connect(func(): Wx.report_event("share_click", {"from": "result", "victory": 1 if victory else 0}); Wx.share(share_title, "from=result"))
+		box.add_child(share_button)
 	var retry := make_button("再次远征", Vector2(720, 52))
 	retry.pressed.connect(start_game)
 	box.add_child(retry)
