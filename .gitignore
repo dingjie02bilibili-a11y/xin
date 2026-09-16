@@ -31,3 +31,6 @@ work/sim_after.txt
 
 # 字体构建中间产物
 work/fontcache/
+
+# 微信小游戏模板缓存
+work/mgcache/
