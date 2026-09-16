@@ -65,7 +65,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--skip-export", action="store_true",
                     help="reuse outputs/web from a previous run")
+    ap.add_argument("--appid", help="WeChat appid to stamp into the project")
     args = ap.parse_args()
+
+    # An appid set on a previous build survives a rebuild: without this, every
+    # run wipes the output directory and the appid reverts to the template's.
+    previous_appid = None
+    existing = os.path.join(OUT, "project.config.json")
+    if os.path.exists(existing):
+        with open(existing, encoding="utf-8") as fh:
+            previous_appid = json.load(fh).get("appid")
 
     if not args.skip_export:
         export_pck()
@@ -74,9 +83,24 @@ def main():
         sys.exit("no outputs/web/index.pck -- run without --skip-export")
 
     shell = template_dir()
+    # Empty the directory rather than removing it: DevTools holds a handle on
+    # the project directory while the project is open, so rmtree() fails on the
+    # directory itself -- after having already deleted half the files inside.
     if os.path.exists(OUT):
-        shutil.rmtree(OUT)
-    shutil.copytree(shell, OUT, ignore=shutil.ignore_patterns(".plugincache", "*.md"))
+        try:
+            for name in os.listdir(OUT):
+                victim = os.path.join(OUT, name)
+                if os.path.isdir(victim):
+                    shutil.rmtree(victim)
+                else:
+                    os.remove(victim)
+        except PermissionError as err:
+            sys.exit(f"cannot rebuild {OUT}: {err}\n"
+                     "close the project in WeChat DevTools first "
+                     "(cli.bat close --project ...), then rerun")
+    os.makedirs(OUT, exist_ok=True)
+    shutil.copytree(shell, OUT, dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns(".plugincache", "*.md"))
 
     # The shell ships a demo pack; ours replaces it, and engine/game.js is
     # the one line that names it.
@@ -105,9 +129,12 @@ def main():
     with open(project_json, encoding="utf-8") as fh:
         project = json.load(fh)
     project["projectname"] = "星渊幸存者"
-    # No appid yet: DevTools opens this with a tourist id, which is enough to
-    # run it in the simulator and on a phone over the debug QR code.
-    project["appid"] = "touristappid"
+    # DevTools rejects "touristappid" outright ("no such AppID"), so there has
+    # to be a real-looking one here. Whatever was used last time wins, then
+    # --appid, then the template's own -- which belongs to someone else and is
+    # only good enough to run the simulator locally.
+    appid = args.appid or previous_appid or project.get("appid")
+    project["appid"] = appid
     with open(project_json, "w", encoding="utf-8", newline="\n") as fh:
         json.dump(project, fh, ensure_ascii=False, indent=4)
 
@@ -120,6 +147,11 @@ def main():
     print(f"  main package : {main_pack / 1024:.0f} KB   (WeChat limit 4 MB)")
     print(f"  engine subpkg: {dir_size(os.path.join(OUT, 'engine')) / 1024 / 1024:.2f} MB")
     print(f"  total        : {total / 1024 / 1024:.2f} MB   (WeChat limit 30 MB)")
+    print(f"  appid        : {appid}")
+    if appid == "wxda5f10e2e9114855":
+        print("  ^ that is the template's own appid. The local simulator runs fine with")
+        print("    it, but previewing on a phone or uploading needs your own:")
+        print("    python tools/build_minigame.py --appid wx<yours>")
     print("open it in WeChat DevTools: 导入项目 -> 选择这个目录 -> 小游戏")
 
 
