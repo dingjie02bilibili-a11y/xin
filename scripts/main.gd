@@ -357,6 +357,7 @@ const UPGRADES := [
 
 var state := GameState.MENU
 var ui_layer: CanvasLayer
+var touch_stick: TouchStick
 var hud: Control
 var player: Player
 var camera: Camera2D
@@ -535,8 +536,25 @@ var passive_state_label: Label
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	randomize()
+	build_touch_stick()
 	queue_redraw()
 	show_main_menu()
+
+# 摇杆挂在自己的一层上，而不是 ui_layer：clear_ui() 每次换界面都会把
+# ui_layer 整个释放重建，摇杆跟着没了就再也回不来。层号比 ui_layer 小，
+# 所以商店、升级这些面板照样盖在它上面。
+func build_touch_stick() -> void:
+	var layer := CanvasLayer.new()
+	layer.layer = 19
+	add_child(layer)
+	touch_stick = TouchStick.new()
+	touch_stick.game = self
+	layer.add_child(touch_stick)
+
+# 只有在真正能走位的时候才收手指：暂停、升级选牌、逛商店时按屏幕
+# 不该把角色推出去。
+func touch_controls_active() -> bool:
+	return state == GameState.PLAYING and not get_tree().paused
 
 func _draw() -> void:
 	var focus := player.global_position if is_instance_valid(player) else Vector2.ZERO
@@ -1087,8 +1105,13 @@ func show_story_prologue() -> void:
 	ui_layer.add_child(root)
 	add_dim_background(root, 0.82)
 	var panel := PanelContainer.new()
-	panel.position = Vector2(155, 48)
-	panel.size = Vector2(970, 624)
+	# 面板跟着屏幕走，别写死 970×624：这段文案是讲给小孩听的，本来就长，
+	# 面板被文字撑高之后「出发救援」会直接顶到画面外面，点都点不到。
+	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	panel.offset_left = 155
+	panel.offset_right = -155
+	panel.offset_top = 48
+	panel.offset_bottom = -48
 	panel.add_theme_stylebox_override("panel", panel_style(Color("09162f"), 24, Color("70d7ff"), 2))
 	root.add_child(panel)
 	var box := VBoxContainer.new()
@@ -1102,8 +1125,14 @@ func show_story_prologue() -> void:
 	box.add_child(title)
 	var story := make_label("天空中有许多星光岛。可爱的星灵住在岛上，帮助大家照明、送信、修路和赶走怪物。\n\n有一天，能量风暴让天穹大灯塔出了故障。道路被撕成不断变化的星渊，三位守门人也被错误指令控制。\n\n你是一名远征者。你的光弹不会伤害敌人，而会为星灵宠物补充能量。星灵吸满能量后，就会用自己的技能战斗。\n\n购买卡牌、排好宠物和规则的顺序，穿过六道安全门。和伙伴一起修好灯塔，让大家重新找到回家的路！", 21, Color("c7d7eb"))
 	story.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	story.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	story.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	box.add_child(story)
+	# 屏幕再矮也只是这段正文变成可以滑动，两个按钮始终留在面板里。
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.add_child(story)
+	box.add_child(scroll)
 	var begin := make_button("出发救援", Vector2(0, 58))
 	begin.pressed.connect(func(): SaveManager.data.intro_seen = true; SaveManager.save(); start_game_after_prologue())
 	box.add_child(begin)
@@ -1689,6 +1718,37 @@ func start_game_after_prologue() -> void:
 	show_toast("第一关 · 迷路的领航员\n%s" % character_opening_line(player.character_name), Color("70d7ff"), 3.0)
 	play_tone(440, 0.12, 0.2)
 
+# HUD 按 1280×720 的设计稿画，但手机屏比 16:9 长得多，画布用 expand 拉开后
+# 宽度会多出一截——贴右边、贴下边的控件不锚住就会飘到画面外面去。
+# 这里把设计稿上的矩形钉到实际屏幕的对应边上：h 取 HUD_LEFT / HUD_CENTER /
+# HUD_RIGHT / HUD_STRETCH，v 取 HUD_TOP / HUD_MIDDLE / HUD_BOTTOM。
+const DESIGN_SIZE := Vector2(1280, 720)
+const HUD_LEFT := -1
+const HUD_CENTER := 0
+const HUD_RIGHT := 1
+const HUD_STRETCH := 2
+const HUD_TOP := -1
+const HUD_MIDDLE := 0
+const HUD_BOTTOM := 1
+
+func place_in_hud(control: Control, design_rect: Rect2, h: int, v: int) -> void:
+	var ay := 0.0 if v == HUD_TOP else (0.5 if v == HUD_MIDDLE else 1.0)
+	control.anchor_top = ay
+	control.anchor_bottom = ay
+	control.offset_top = design_rect.position.y - DESIGN_SIZE.y * ay
+	control.offset_bottom = control.offset_top + design_rect.size.y
+	if h == HUD_STRETCH:
+		control.anchor_left = 0.0
+		control.anchor_right = 1.0
+		control.offset_left = design_rect.position.x
+		control.offset_right = design_rect.position.x + design_rect.size.x - DESIGN_SIZE.x
+		return
+	var ax := 0.0 if h == HUD_LEFT else (0.5 if h == HUD_CENTER else 1.0)
+	control.anchor_left = ax
+	control.anchor_right = ax
+	control.offset_left = design_rect.position.x - DESIGN_SIZE.x * ax
+	control.offset_right = control.offset_left + design_rect.size.x
+
 func build_hud() -> void:
 	clear_ui()
 	skill_tooltip = null
@@ -1699,8 +1759,7 @@ func build_hud() -> void:
 	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ui_layer.add_child(hud)
 	var top := PanelContainer.new()
-	top.position = Vector2(24, 20)
-	top.size = Vector2(1232, 78)
+	place_in_hud(top, Rect2(24, 20, 1232, 78), HUD_STRETCH, HUD_TOP)
 	top.add_theme_stylebox_override("panel", panel_style(Color(0.025, 0.055, 0.11, 0.88), 15, Color(0.18, 0.38, 0.62, 0.75), 2))
 	hud.add_child(top)
 	var row := HBoxContainer.new()
@@ -1745,14 +1804,12 @@ func build_hud() -> void:
 	kill_label.custom_minimum_size.x = 100
 	row.add_child(kill_label)
 	boss_label = make_label("", 20, Color("facc15"))
-	boss_label.position = Vector2(220, 112)
-	boss_label.size = Vector2(840, 66)
+	place_in_hud(boss_label, Rect2(220, 112, 840, 66), HUD_CENTER, HUD_TOP)
 	boss_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	boss_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	var passive_panel := PanelContainer.new()
 	passive_panel.name = "PassivePanel"
-	passive_panel.position = Vector2(922, 112)
-	passive_panel.size = Vector2(258, 86)
+	place_in_hud(passive_panel, Rect2(922, 112, 258, 86), HUD_RIGHT, HUD_TOP)
 	passive_panel.add_theme_stylebox_override("panel", compact_panel_style(Color(0.025, 0.055, 0.11, 0.92), 12, player.color, 2))
 	hud.add_child(passive_panel)
 	var passive_row := HBoxContainer.new()
@@ -1789,8 +1846,7 @@ func build_hud() -> void:
 	passive_state_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	passive_box.add_child(passive_state_label)
 	var deck_panel := PanelContainer.new()
-	deck_panel.position = Vector2(24, 535)
-	deck_panel.size = Vector2(930, 175)
+	place_in_hud(deck_panel, Rect2(24, 535, 930, 175), HUD_LEFT, HUD_BOTTOM)
 	deck_panel.add_theme_stylebox_override("panel", compact_panel_style(Color(0.025, 0.055, 0.11, 0.94), 14, Color("facc15"), 2))
 	hud.add_child(deck_panel)
 	var deck_box := VBoxContainer.new()
@@ -1805,19 +1861,17 @@ func build_hud() -> void:
 	boss_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hud.add_child(boss_label)
 	mode_label = make_label("主线远征 · 关卡 1/6", 18, Color("c7d7eb"))
-	mode_label.position = Vector2(24, 112)
-	mode_label.size = Vector2(260, 36)
+	place_in_hud(mode_label, Rect2(24, 112, 260, 36), HUD_LEFT, HUD_TOP)
 	hud.add_child(mode_label)
 	toast_label = make_label("", 28)
-	toast_label.position = Vector2(270, 425)
-	toast_label.size = Vector2(700, 102)
+	place_in_hud(toast_label, Rect2(270, 425, 700, 102), HUD_CENTER, HUD_MIDDLE)
 	toast_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	toast_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	toast_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	toast_label.modulate.a = 0.0
 	hud.add_child(toast_label)
 	var pause_button := make_button("Ⅱ", Vector2(52, 52))
-	pause_button.position = Vector2(1190, 112)
+	place_in_hud(pause_button, Rect2(1190, 112, 52, 52), HUD_RIGHT, HUD_TOP)
 	pause_button.mouse_filter = Control.MOUSE_FILTER_STOP
 	pause_button.pressed.connect(show_pause)
 	hud.add_child(pause_button)

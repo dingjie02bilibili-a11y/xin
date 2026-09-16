@@ -28,3 +28,6 @@ work/smoke_final.txt
 work/sim_before.txt
 work/sim_mid.txt
 work/sim_after.txt
+
+# 字体构建中间产物
+work/fontcache/
